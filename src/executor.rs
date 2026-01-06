@@ -32,8 +32,9 @@ impl Interpreter {
         }
 
         if let Some(mut current_node_id) = start_node_id {
-             log::info!("Found EventTick node: {:?}", current_node_id);
-             loop {
+             logger(format!("Execution starting from Event Tick ({:?})", current_node_id));
+             let mut steps = 0;
+             while steps < 1000 { // Simple infinite loop protection
                  let node = match graph.nodes.get(&current_node_id) {
                      Some(n) => n,
                      None => break,
@@ -48,10 +49,12 @@ impl Interpreter {
                                   break;
                               }
                          } else if name == "Print String" {
-                             // Evaluate Input "String"
                              let val = Self::evaluate_input(graph, current_node_id, "String")?;
-                             // We should really have a proper value system.
-                             log::info!("PRINT: {:?}", val);
+                             let output = match val {
+                                 VariableValue::String(s) => s,
+                                 other => format!("{:?}", other),
+                             };
+                             logger(format!("PRINT: {}", output));
                              
                              if let Some(next) = Self::follow_flow(graph, current_node_id, "Next") {
                                   current_node_id = next;
@@ -64,14 +67,19 @@ impl Interpreter {
                      }
                      _ => break,
                  }
+                 steps += 1;
              }
+             if steps >= 1000 {
+                 logger("Execution stopped: Step limit reached (possible infinite loop).".to_string());
+             }
+        } else {
+            logger("No 'Event Tick' node found. Execution aborted.".to_string());
         }
         
         Ok(())
     }
     
     fn follow_flow(graph: &BlueprintGraph, node_id: Uuid, port_name: &str) -> Option<Uuid> {
-        // Find connection from node_id:port_name
         for conn in &graph.connections {
             if conn.from_node == node_id && conn.from_port == port_name {
                 return Some(conn.to_node);
@@ -81,20 +89,44 @@ impl Interpreter {
     }
     
     fn evaluate_input(graph: &BlueprintGraph, node_id: Uuid, port_name: &str) -> anyhow::Result<VariableValue> {
-        // Find connection to node_id:port_name (is_input)
-        // logic: connection.to_node == node_id && connection.to_port == port_name
         for conn in &graph.connections {
             if conn.to_node == node_id && conn.to_port == port_name {
-                let from_node = graph.nodes.get(&conn.from_node).unwrap();
+                let from_node = graph.nodes.get(&conn.from_node).ok_or_else(|| anyhow::anyhow!("Source node not found"))?;
                 return Self::evaluate_node(graph, from_node, &conn.from_port);
             }
         }
-        // Default value if disconnected?
-        Ok(VariableValue::String("Default".into()))
+        
+        // If disconnected, use default value from the input port
+        if let Some(node) = graph.nodes.get(&node_id) {
+            if let Some(port) = node.inputs.iter().find(|p| p.name == port_name) {
+                return Ok(port.default_value.clone());
+            }
+        }
+
+        Ok(VariableValue::None)
     }
     
-    fn evaluate_node(_graph: &BlueprintGraph, _node: &Node, _output_port: &str) -> anyhow::Result<VariableValue> {
-        // Simple evaluation
-        Ok(VariableValue::String("Evaluated Value".into()))
+    fn evaluate_node(graph: &BlueprintGraph, node: &Node, _output_port: &str) -> anyhow::Result<VariableValue> {
+        match &node.node_type {
+            NodeType::Add => {
+                let a = Self::evaluate_input(graph, node.id, "A")?;
+                let b = Self::evaluate_input(graph, node.id, "B")?;
+                match (a, b) {
+                    (VariableValue::Float(av), VariableValue::Float(bv)) => Ok(VariableValue::Float(av + bv)),
+                    (VariableValue::Integer(av), VariableValue::Integer(bv)) => Ok(VariableValue::Integer(av + bv)),
+                    _ => Ok(VariableValue::None),
+                }
+            }
+            NodeType::Subtract => {
+                let a = Self::evaluate_input(graph, node.id, "A")?;
+                let b = Self::evaluate_input(graph, node.id, "B")?;
+                match (a, b) {
+                    (VariableValue::Float(av), VariableValue::Float(bv)) => Ok(VariableValue::Float(av - bv)),
+                    (VariableValue::Integer(av), VariableValue::Integer(bv)) => Ok(VariableValue::Integer(av - bv)),
+                    _ => Ok(VariableValue::None),
+                }
+            }
+            _ => Ok(VariableValue::None)
+        }
     }
 }

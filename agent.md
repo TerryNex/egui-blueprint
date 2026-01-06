@@ -17,3 +17,7 @@ Goal: Create a visual programming system similar to UE5 Blueprints using Rust an
 - Serialization (serde)
 - Hot-reloading
 - Debugging tools
+
+## References
+- [egui Goals](https://github.com/emilk/egui?tab=readme-ov-file#goals)
+- [egui Documentation (0.33.3)](https://docs.rs/egui/0.33.3/egui/)

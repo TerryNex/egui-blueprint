@@ -34,6 +34,17 @@ impl GraphEditor {
     pub fn show(&mut self, ui: &mut egui::Ui, graph: &mut BlueprintGraph) {
         let clip_rect = ui.max_rect();
         let pointer_in_bounds = ui.rect_contains_pointer(clip_rect);
+        let pointer_pos = ui.ctx().pointer_latest_pos();
+
+        let mut input_escape = false;
+        let mut input_delete = false;
+        let mut input_primary_down = false;
+        let mut input_primary_pressed = false;
+        let mut input_primary_released = false;
+        let mut input_secondary_clicked = false;
+        let mut input_any_released = false;
+        let mut input_modifiers = egui::Modifiers::default();
+        let mut input_space = false;
 
         ui.input(|i| {
             // Pan with Middle Mouse or Alt + Left Mouse
@@ -45,46 +56,64 @@ impl GraphEditor {
                 if pointer_in_bounds {
                      let zoom_delta = i.zoom_delta();
                      if zoom_delta != 1.0 {
-                         // TODO: Zoom towards pointer
                          self.zoom *= zoom_delta;
                      }
                 }
             }
+            
+            input_escape = i.key_pressed(egui::Key::Escape);
+            input_delete = i.key_pressed(egui::Key::Delete);
+            input_primary_down = i.pointer.primary_down();
+            input_primary_pressed = i.pointer.primary_pressed();
+            input_primary_released = i.pointer.primary_released();
+            input_secondary_clicked = i.pointer.secondary_clicked();
+            input_any_released = i.pointer.any_released();
+            input_modifiers = i.modifiers;
+            input_space = i.key_pressed(egui::Key::Space);
         });
+
+        // Pre-calculate node sizes (needed for both drawing and connection lines)
+        let mut node_sizes = std::collections::HashMap::new();
+        for node in graph.nodes.values() {
+             node_sizes.insert(node.id, self.get_node_size(ui, node, &graph.connections));
+        }
 
         let painter = ui.painter();
         painter.rect_filled(clip_rect, 0.0, Color32::from_gray(32)); // Background
 
         // Draw connections
-        self.draw_connections(ui, graph);
+        self.draw_connections(ui, graph, &node_sizes);
         
         // Draw connection in progress
         if let Some((node_id, port_name, is_input)) = &self.connection_start {
-            if let Some(pointer_pos) = ui.ctx().pointer_latest_pos() {
-                 let start_pos = self.get_port_screen_pos(ui, &graph.nodes, *node_id, port_name, *is_input, ui.max_rect().min);
-                 self.draw_bezier(ui, start_pos, pointer_pos, Color32::WHITE);
+            if let Some(pos) = pointer_pos {
+                 let start_pos = self.get_port_screen_pos(ui, &graph.nodes, *node_id, port_name, *is_input, clip_rect.min, &node_sizes);
+                 self.draw_bezier(ui, start_pos, pos, Color32::WHITE);
             }
         }
 
         // Draw nodes
         let mut node_move_delta = Vec2::ZERO;
-        let mut node_to_move = None; // Primary node being dragged
+        let mut node_to_move = None;
         let mut connect_event = None;
-        let mut click_on_node = false;
+        let mut interaction_consumed = false;
 
-        for node in graph.nodes.values() {
-            let (drag_delta, start_connect, clicked) = self.draw_node(ui, node);
-            if clicked {
-                click_on_node = true;
+        for node in graph.nodes.values_mut() {
+            let (drag_delta, start_connect, clicked, clicked_port, pressed) = self.draw_node(ui, node, input_primary_pressed, input_primary_released, &graph.connections, &node_sizes);
+            
+            if pressed || clicked_port {
+                interaction_consumed = true;
+            }
+
+            if clicked && !clicked_port {
                 // Handle Selection Click
-                if ui.input(|i| i.modifiers.shift) {
+                if input_modifiers.shift {
                     if self.selected_nodes.contains(&node.id) {
                         self.selected_nodes.remove(&node.id);
                     } else {
                         self.selected_nodes.insert(node.id);
                     }
                 } else if !self.selected_nodes.contains(&node.id) {
-                     // If clicking a new node without shift, select only it
                      self.selected_nodes.clear();
                      self.selected_nodes.insert(node.id);
                 }
@@ -94,9 +123,8 @@ impl GraphEditor {
                 node_move_delta = drag_delta;
                 node_to_move = Some(node.id);
                 
-                // If dragging a node that isn't selected, select it (and clear others if not shift)
                 if !self.selected_nodes.contains(&node.id) {
-                     if !ui.input(|i| i.modifiers.shift) {
+                     if !input_modifiers.shift {
                         self.selected_nodes.clear();
                      }
                      self.selected_nodes.insert(node.id);
@@ -107,7 +135,7 @@ impl GraphEditor {
             }
         }
 
-        // Apply deferred updates (Batch Move)
+        // Apply Batch Move
         if node_move_delta != Vec2::ZERO {
             for id in &self.selected_nodes {
                 if let Some(node) = graph.nodes.get_mut(id) {
@@ -118,51 +146,36 @@ impl GraphEditor {
         }
         
         // Background Selection Box Logic
-        // If clicking on background (not node, not connection start) and dragging
-        if ui.input(|i| i.pointer.primary_down()) 
+        if input_primary_down 
+            && !interaction_consumed
             && node_to_move.is_none() 
             && connect_event.is_none()
             && self.connection_start.is_none() 
-            && !ui.input(|i| i.modifiers.alt) // Alt is for Pan
-            && !click_on_node
+            && !input_modifiers.alt
         {
-             // Start or update selection box
-             if let Some(pointer_pos) = ui.ctx().pointer_latest_pos() {
+             if let Some(pos) = pointer_pos {
                  if let Some(mut rect) = self.selection_box {
-                     rect.max = pointer_pos;
+                     rect.max = pos;
                      self.selection_box = Some(rect);
-                 } else if ui.input(|i| i.pointer.primary_pressed()) {
-                     self.selection_box = Some(Rect::from_min_max(pointer_pos, pointer_pos));
-                     if !ui.input(|i| i.modifiers.shift) {
+                 } else if input_primary_pressed {
+                     self.selection_box = Some(Rect::from_min_max(pos, pos));
+                     if !input_modifiers.shift {
                          self.selected_nodes.clear();
                      }
                  }
              }
         }
         
-        if ui.input(|i| i.pointer.primary_released()) {
+        if input_primary_released {
             if let Some(rect) = self.selection_box {
-                // Finalize selection
-                // Check intersection with nodes
-                 // We need to check if node screen rect intersects with selection box (screen rect)
-                 // Wait, selection box is in screen coords? Yes (pointer_pos).
-                 // Node drawing uses screen coords.
-                 
-                 // We need to iterate again or check positions.
-                 // Since we don't store screen rects, we calculate them again.
-                 let selection_rect = Rect::from_min_max(rect.min.min(rect.max), rect.max.max(rect.min)); // Normalize
-                 
+                 let selection_rect = Rect::from_min_max(rect.min.min(rect.max), rect.max.max(rect.min));
                  for node in graph.nodes.values() {
                      let node_pos = Pos2::new(node.position.0, node.position.1);
                      let screen_pos = self.to_screen(node_pos, clip_rect.min);
-                     
-                     // Approximate Size
                      let title = format!("{:?}", node.node_type);
                      let title_galley = ui.painter().layout(title, egui::FontId::proportional(14.0 * self.zoom), Color32::WHITE, f32::INFINITY);
-                     let min_width = 150.0 * self.zoom;
-                     let node_width = min_width.max(title_galley.rect.width() + 20.0 * self.zoom);
+                     let node_width = (150.0 * self.zoom).max(title_galley.rect.width() + 20.0 * self.zoom);
                      let node_screen_rect = Rect::from_min_size(screen_pos, Vec2::new(node_width, 100.0 * self.zoom));
-                     
                      if selection_rect.intersects(node_screen_rect) {
                          self.selected_nodes.insert(node.id);
                      }
@@ -179,55 +192,38 @@ impl GraphEditor {
         }
 
         // Delete Selected
-        if ui.input(|i| i.key_pressed(egui::Key::Delete)) {
+        if input_delete {
             for id in &self.selected_nodes {
                 graph.nodes.remove(id);
-                // Also remove connections
                 graph.connections.retain(|c| c.from_node != *id && c.to_node != *id);
             }
             self.selected_nodes.clear();
         }
         
         // Right click wire deletion
-        if let Some(pointer_pos) = ui.ctx().pointer_latest_pos() {
-             if ui.input(|i| i.pointer.secondary_clicked()) {
+        if let Some(pos) = pointer_pos {
+             if input_secondary_clicked {
                  graph.connections.retain(|c| {
-                      let p1 = self.get_port_screen_pos(ui, &graph.nodes, c.from_node, &c.from_port, false, clip_rect.min);
-                      let p2 = self.get_port_screen_pos(ui, &graph.nodes, c.to_node, &c.to_port, true, clip_rect.min);
-                      // Simple distance check to line segment or bezier? 
-                      // Benzier is hard. Let's approx with distance to p1 or p2 for now for simplicity, or middle.
-                      // Proper hit testing on bezier is mathy.
-                      // Let's use a simple distance to the midpoint.
+                      let p1 = self.get_port_screen_pos(ui, &graph.nodes, c.from_node, &c.from_port, false, clip_rect.min, &node_sizes);
+                      let p2 = self.get_port_screen_pos(ui, &graph.nodes, c.to_node, &c.to_port, true, clip_rect.min, &node_sizes);
                       let mid = p1 + (p2 - p1) * 0.5;
-                      if mid.distance(pointer_pos) < 20.0 {
-                          return false; // Delete
-                      }
-                      true
+                      mid.distance(pos) > 20.0
                  });
              }
         }
 
+        let has_connect_event = connect_event.is_some();
         if let Some((id, port, is_input)) = connect_event {
-             // If we are already dragging a connection, try to complete it
              if let Some((start_id, start_port, start_is_input)) = &self.connection_start {
                  if *start_is_input != is_input && *start_id != id {
-                     // Valid(ish) connection
-                     // TODO: Check types
                      let (from, from_port, to, to_port) = if *start_is_input {
                          (id, port, *start_id, start_port.clone())
                      } else {
                          (*start_id, start_port.clone(), id, port)
                      };
-                     
-                     graph.connections.push(crate::graph::Connection {
-                         from_node: from,
-                         from_port: from_port,
-                         to_node: to,
-                         to_port: to_port,
-                     });
+                     graph.connections.push(crate::graph::Connection { from_node: from, from_port, to_node: to, to_port });
                      self.connection_start = None;
                  } else {
-                     // Cancel or restart
                      self.connection_start = Some((id, port, is_input));
                  }
              } else {
@@ -235,27 +231,27 @@ impl GraphEditor {
              }
         }
         
-        // Stop connection drag if mouse released (and not handled) OR Escape pressed OR Right Click
-         if ui.input(|i| i.pointer.any_released() || i.key_pressed(egui::Key::Escape) || i.pointer.secondary_clicked()) && self.connection_start.is_some() {
-             // Cancel connection
+        // Connection Cancellation
+         if (input_escape || input_secondary_clicked) && self.connection_start.is_some() {
              self.connection_start = None;
          }
          
-         if ui.input(|i| i.pointer.primary_released()) {
-             // If we clicked on nothing, clear connection
+         // Cancellation on release only if not over a port (handled by connect_event)
+         if input_primary_released && self.connection_start.is_some() && !has_connect_event {
+              self.connection_start = None;
          }
          
          // Quick Add Menu (Spacebar)
-         if ui.input(|i| i.key_pressed(egui::Key::Space)) && self.node_finder.is_none() {
-             if let Some(pointer_pos) = ui.ctx().pointer_latest_pos() {
-                 self.node_finder = Some(pointer_pos);
+         if input_space && self.node_finder.is_none() {
+             if let Some(pos) = pointer_pos {
+                 self.node_finder = Some(pos);
                  self.node_finder_query.clear();
              }
          }
          
          if let Some(pos) = self.node_finder {
              let mut open = true;
-             egui::Window::new("Add Node")
+             let window_response = egui::Window::new("Add Node")
                  .id(egui::Id::new("node_finder"))
                  .fixed_pos(pos)
                  .pivot(egui::Align2::LEFT_TOP)
@@ -265,44 +261,31 @@ impl GraphEditor {
                  .open(&mut open)
                  .show(ui.ctx(), |ui| {
                      ui.text_edit_singleline(&mut self.node_finder_query).request_focus();
-                     
                      let options = vec![
                          ("Event Tick", crate::node_types::NodeType::BlueprintFunction { name: "Event Tick".into() }),
                          ("Print String", crate::node_types::NodeType::BlueprintFunction { name: "Print String".into() }),
                          ("Add", crate::node_types::NodeType::Add),
                          ("Subtract", crate::node_types::NodeType::Subtract),
-                         // Add more options
                      ];
-                     
                      for (label, node_type) in options {
                          if self.node_finder_query.is_empty() || label.to_lowercase().contains(&self.node_finder_query.to_lowercase()) {
                              if ui.button(label).clicked() {
-                                 // Add Node
                                  let id = Uuid::new_v4();
-                                 // We need to define ports for these.
-                                 // This is where a factory/template system is needed.
-                                 // For now, hardcode logic or use a helper.
                                  let (inputs, outputs) = Self::get_ports_for_type(&node_type);
-                                 
-                                 // Convert screen pos back to graph pos
                                  let graph_pos = self.from_screen(pos, clip_rect.min);
-
-                                 graph.nodes.insert(id, Node {
-                                     id,
-                                     node_type,
-                                     position: (graph_pos.x, graph_pos.y),
-                                     inputs,
-                                     outputs,
-                                 });
+                                 graph.nodes.insert(id, Node { id, node_type, position: (graph_pos.x, graph_pos.y), inputs, outputs });
                                  self.node_finder = None;
                              }
                          }
                      }
                  });
              
-             if !open || ui.input(|i| i.key_pressed(egui::Key::Escape)) || ui.input(|i| i.pointer.primary_clicked() && !ui.rect_contains_pointer(ui.max_rect())) {
-                 // Close if clicked outside or pressed escape (Window built-in closing handles outer clicks usually? No, egui windows are non-modal)
-                 // Just check open flag or escape
+             if let Some(inner) = window_response {
+                 let clicked_outside = input_primary_pressed && !inner.response.rect.contains(pointer_pos.unwrap_or(Pos2::ZERO));
+                 if !open || input_escape || clicked_outside {
+                     self.node_finder = None;
+                 }
+             } else if !open || input_escape {
                  self.node_finder = None;
              }
          }
@@ -317,134 +300,169 @@ impl GraphEditor {
     }
     
     fn get_ports_for_type(node_type: &crate::node_types::NodeType) -> (Vec<super::graph::Port>, Vec<super::graph::Port>) {
-        use crate::graph::Port;
+        use crate::graph::{Port, VariableValue};
         use crate::node_types::{NodeType, DataType};
         match node_type {
             NodeType::BlueprintFunction { name } if name == "Event Tick" => (
                 vec![], 
-                vec![Port { name: "Next".into(), data_type: DataType::ExecutionFlow }]
+                vec![Port { name: "Next".into(), data_type: DataType::ExecutionFlow, default_value: VariableValue::None }]
             ),
             NodeType::BlueprintFunction { name } if name == "Print String" => (
                 vec![
-                    Port { name: "In".into(), data_type: DataType::ExecutionFlow },
-                    Port { name: "String".into(), data_type: DataType::String }
+                    Port { name: "In".into(), data_type: DataType::ExecutionFlow, default_value: VariableValue::None },
+                    Port { name: "String".into(), data_type: DataType::String, default_value: VariableValue::String("Hello".into()) }
                 ],
-                vec![Port { name: "Next".into(), data_type: DataType::ExecutionFlow }]
+                vec![Port { name: "Next".into(), data_type: DataType::ExecutionFlow, default_value: VariableValue::None }]
             ),
             NodeType::Add => (
                  vec![
-                    Port { name: "A".into(), data_type: DataType::Float }, // Simplifying to Float
-                    Port { name: "B".into(), data_type: DataType::Float }
+                    Port { name: "A".into(), data_type: DataType::Float, default_value: VariableValue::Float(0.0) },
+                    Port { name: "B".into(), data_type: DataType::Float, default_value: VariableValue::Float(0.0) }
                 ],
-                vec![Port { name: "Out".into(), data_type: DataType::Float }]
+                vec![Port { name: "Out".into(), data_type: DataType::Float, default_value: VariableValue::Float(0.0) }]
             ),
             NodeType::Subtract => (
                  vec![
-                    Port { name: "A".into(), data_type: DataType::Float },
-                    Port { name: "B".into(), data_type: DataType::Float }
+                    Port { name: "A".into(), data_type: DataType::Float, default_value: VariableValue::Float(0.0) },
+                    Port { name: "B".into(), data_type: DataType::Float, default_value: VariableValue::Float(0.0) }
                 ],
-                vec![Port { name: "Out".into(), data_type: DataType::Float }]
+                vec![Port { name: "Out".into(), data_type: DataType::Float, default_value: VariableValue::Float(0.0) }]
             ),
             _ => (vec![], vec![])
         }
     }
 
-    fn draw_node(&mut self, ui: &mut egui::Ui, node: &Node) -> (Vec2, Option<(Uuid, String, bool)>, bool) {
+    fn draw_node(&mut self, ui: &mut egui::Ui, node: &mut Node, input_primary_pressed: bool, input_primary_released: bool, connections: &[crate::graph::Connection], node_sizes: &std::collections::HashMap<Uuid, Vec2>) -> (Vec2, Option<(Uuid, String, bool)>, bool, bool, bool) {
         let node_pos = Pos2::new(node.position.0, node.position.1);
         let screen_pos = self.to_screen(node_pos, ui.max_rect().min);
         
         let mut drag_delta = Vec2::ZERO;
-        let mut connect_event = None; // (NodeId, PortName, is_input)
+        let mut connect_event = None;
+        let mut clicked_port = false;
+        let mut pressed_any_port = false;
 
-        // Calculate size based on title
         let title = format!("{:?}", node.node_type);
         let title_galley = ui.painter().layout(title, egui::FontId::proportional(14.0 * self.zoom), Color32::WHITE, f32::INFINITY);
-        let min_width = 150.0 * self.zoom;
-        let node_width = min_width.max(title_galley.rect.width() + 20.0 * self.zoom); // Padding
-
-        let node_rect = Rect::from_min_size(screen_pos, Vec2::new(node_width, 100.0 * self.zoom)); // Approx height
+        let _min_width = 150.0 * self.zoom;
         
-        // Node Window/Area
+        let size = *node_sizes.get(&node.id).unwrap_or(&self.get_node_size(ui, node, connections));
+        let node_rect = Rect::from_min_size(screen_pos, size);
+        
+        // --- Interaction Logic ---
+        // 1. Check Ports FIRST
+        let mut y_offset = 30.0 * self.zoom;
+        for input in &node.inputs {
+            let port_pos = screen_pos + Vec2::new(0.0, y_offset);
+            let port_rect = Rect::from_center_size(port_pos, Vec2::splat(16.0 * self.zoom));
+            let port_response = ui.interact(port_rect, ui.id().with(node.id).with(&input.name).with("in"), Sense::click_and_drag());
+            
+            if port_response.drag_started() || port_response.clicked() {
+                connect_event = Some((node.id, input.name.clone(), true));
+                clicked_port = true;
+            }
+            if port_response.hovered() && input_primary_released {
+                connect_event = Some((node.id, input.name.clone(), true));
+                clicked_port = true;
+            }
+            if port_response.contains_pointer() && input_primary_pressed {
+                pressed_any_port = true;
+            }
+            y_offset += 25.0 * self.zoom;
+        }
+
+        let mut y_offset = 30.0 * self.zoom;
+        for output in &node.outputs {
+            let port_pos = screen_pos + Vec2::new(node_rect.width(), y_offset);
+            let port_rect = Rect::from_center_size(port_pos, Vec2::splat(16.0 * self.zoom));
+            let port_response = ui.interact(port_rect, ui.id().with(node.id).with(&output.name).with("out"), Sense::click_and_drag());
+            
+            if port_response.drag_started() || port_response.clicked() {
+                connect_event = Some((node.id, output.name.clone(), false));
+                clicked_port = true;
+            }
+             if port_response.hovered() && input_primary_released {
+                connect_event = Some((node.id, output.name.clone(), false));
+                clicked_port = true;
+            }
+            if port_response.contains_pointer() && input_primary_pressed {
+                pressed_any_port = true;
+            }
+            y_offset += 25.0 * self.zoom;
+        }
+
+        // 2. Allocate Node Background
         let response = ui.allocate_rect(node_rect, Sense::click_and_drag());
-        if response.dragged() {
+        if response.dragged() && !pressed_any_port {
             drag_delta = response.drag_delta() / self.zoom;
         }
         let clicked = response.clicked();
+        let pressed_node = response.drag_started() || (response.contains_pointer() && input_primary_pressed);
 
-        // Selection Highlight
+        // --- Drawing Logic ---
         if self.selected_nodes.contains(&node.id) {
              ui.painter().rect_stroke(node_rect.expand(2.0), 3.0, Stroke::new(2.0, Color32::YELLOW), egui::StrokeKind::Middle);
         }
 
-        // Draw Node Background
         ui.painter().rect_filled(node_rect, 5.0, Color32::from_gray(64));
         ui.painter().rect_stroke(node_rect, 5.0, Stroke::new(1.0, Color32::BLACK), egui::StrokeKind::Middle);
 
-        // Header
         let header_rect = Rect::from_min_max(node_rect.min, Pos2::new(node_rect.max.x, node_rect.min.y + 20.0 * self.zoom));
         ui.painter().rect_filled(header_rect, 5.0, Color32::from_rgb(100, 100, 200));
         ui.painter().galley(header_rect.center() - title_galley.rect.size() * 0.5, title_galley, Color32::WHITE);
 
-        // Ports
-        // Inputs
+        // Draw Ports & Inline Editors
         let mut y_offset = 30.0 * self.zoom;
-        for input in &node.inputs {
+        for input in &mut node.inputs {
             let port_pos = screen_pos + Vec2::new(0.0, y_offset);
-            let port_rect = Rect::from_center_size(port_pos, Vec2::splat(10.0 * self.zoom));
-            
             ui.painter().circle_filled(port_pos, 5.0 * self.zoom, self.get_type_color(&input.data_type));
             
-            // Name
-            ui.painter().text(
-                 port_pos + Vec2::new(12.0 * self.zoom, 0.0),
-                 egui::Align2::LEFT_CENTER,
-                 &input.name,
-                 egui::FontId::proportional(12.0 * self.zoom),
-                 Color32::WHITE
-            );
-
-            // Interaction
-            let port_response = ui.interact(port_rect, ui.id().with(node.id).with(&input.name).with("in"), Sense::click());
-            if port_response.clicked() {
-                connect_event = Some((node.id, input.name.clone(), true));
+            let name_pos = port_pos + Vec2::new(12.0 * self.zoom, 0.0);
+            ui.painter().text(name_pos, egui::Align2::LEFT_CENTER, &input.name, egui::FontId::proportional(12.0 * self.zoom), Color32::WHITE);
+            
+            // Inline Editor
+            let is_connected = connections.iter().any(|c| c.to_node == node.id && c.to_port == input.name);
+            if !is_connected && input.data_type != DataType::ExecutionFlow {
+                let edit_rect = Rect::from_min_size(name_pos + Vec2::new(60.0 * self.zoom, -10.0 * self.zoom), Vec2::new(80.0 * self.zoom, 20.0 * self.zoom));
+                
+                ui.allocate_ui_at_rect(edit_rect, |ui| {
+                    use crate::graph::VariableValue;
+                    match &mut input.default_value {
+                        VariableValue::String(s) => {
+                             ui.add(egui::TextEdit::singleline(s).desired_width(70.0 * self.zoom));
+                        }
+                        VariableValue::Float(f) => {
+                             ui.add(egui::DragValue::new(f).speed(0.1));
+                        }
+                        VariableValue::Integer(i) => {
+                             ui.add(egui::DragValue::new(i));
+                        }
+                        VariableValue::Boolean(b) => {
+                             ui.checkbox(b, "");
+                        }
+                        _ => {}
+                    }
+                });
             }
 
-            y_offset += 20.0 * self.zoom;
+            y_offset += 25.0 * self.zoom;
         }
         
-        // Outputs
         let mut y_offset = 30.0 * self.zoom;
         for output in &node.outputs {
             let port_pos = screen_pos + Vec2::new(node_rect.width(), y_offset);
-            let port_rect = Rect::from_center_size(port_pos, Vec2::splat(10.0 * self.zoom));
-            
             ui.painter().circle_filled(port_pos, 5.0 * self.zoom, self.get_type_color(&output.data_type));
-             // Name
-            ui.painter().text(
-                 port_pos - Vec2::new(12.0 * self.zoom, 0.0),
-                 egui::Align2::RIGHT_CENTER,
-                 &output.name,
-                 egui::FontId::proportional(12.0 * self.zoom),
-                 Color32::WHITE
-            );
-            
-             // Interaction
-            let port_response = ui.interact(port_rect, ui.id().with(node.id).with(&output.name).with("out"), Sense::click());
-            if port_response.clicked() {
-                connect_event = Some((node.id, output.name.clone(), false));
-            }
-
-            y_offset += 20.0 * self.zoom;
+            ui.painter().text(port_pos - Vec2::new(12.0 * self.zoom, 0.0), egui::Align2::RIGHT_CENTER, &output.name, egui::FontId::proportional(12.0 * self.zoom), Color32::WHITE);
+            y_offset += 25.0 * self.zoom;
         }
 
-        (drag_delta, connect_event, clicked)
+        (drag_delta, connect_event, clicked, clicked_port, pressed_node || pressed_any_port)
     }
     
-    fn draw_connections(&self, ui: &egui::Ui, graph: &BlueprintGraph) {
+    fn draw_connections(&self, ui: &egui::Ui, graph: &BlueprintGraph, node_sizes: &std::collections::HashMap<Uuid, Vec2>) {
         let offset = ui.max_rect().min;
         for conn in &graph.connections {
-            let p1 = self.get_port_screen_pos(ui, &graph.nodes, conn.from_node, &conn.from_port, false, offset);
-            let p2 = self.get_port_screen_pos(ui, &graph.nodes, conn.to_node, &conn.to_port, true, offset);
+            let p1 = self.get_port_screen_pos(ui, &graph.nodes, conn.from_node, &conn.from_port, false, offset, node_sizes);
+            let p2 = self.get_port_screen_pos(ui, &graph.nodes, conn.to_node, &conn.to_port, true, offset, node_sizes);
             self.draw_bezier(ui, p1, p2, Color32::WHITE); 
         }
     }
@@ -465,16 +483,12 @@ impl GraphEditor {
         ui.painter().add(curve);
     }
 
-    fn get_port_screen_pos(&self, ui: &egui::Ui, nodes: &std::collections::HashMap<Uuid, Node>, node_id: Uuid, port_name: &str, is_input: bool, offset: Pos2) -> Pos2 {
+    fn get_port_screen_pos(&self, _ui: &egui::Ui, nodes: &std::collections::HashMap<Uuid, Node>, node_id: Uuid, port_name: &str, is_input: bool, offset: Pos2, node_sizes: &std::collections::HashMap<Uuid, Vec2>) -> Pos2 {
          if let Some(node) = nodes.get(&node_id) {
              let node_pos = Pos2::new(node.position.0, node.position.1);
              let screen_pos = self.to_screen(node_pos, offset);
              
-             // Recalculate Width (Duplicated logic, should extract to method)
-             let title = format!("{:?}", node.node_type);
-             let title_width = ui.painter().layout(title, egui::FontId::proportional(14.0 * self.zoom), Color32::WHITE, f32::INFINITY).rect.width();
-             let min_width = 150.0 * self.zoom;
-             let node_width = min_width.max(title_width + 20.0 * self.zoom);
+             let node_size = *node_sizes.get(&node_id).unwrap_or(&Vec2::ZERO);
 
              let index = if is_input {
                  node.inputs.iter().position(|p| p.name == port_name).unwrap_or(0)
@@ -482,18 +496,34 @@ impl GraphEditor {
                  node.outputs.iter().position(|p| p.name == port_name).unwrap_or(0)
              };
              
-             let y = 30.0 + (index as f32 * 20.0);
-             let x = if is_input { 0.0 } else { node_width / self.zoom }; // Need unzoomed width? No, node_width IS zoomed.
-             // Wait, node_width IS zoomed because it uses * self.zoom.
-             // screen_pos is zoomed.
-             // So we add node_width directly? 
-             // x=0 is left. x=width is right.
-             // But screen_pos is the top-left of the node.
-             // yes.
+             let y = 30.0 + (index as f32 * 25.0);
+             let x = if is_input { 0.0 } else { node_size.x };
              
              return screen_pos + Vec2::new(x, y * self.zoom);
          }
          Pos2::ZERO
+    }
+
+    fn get_node_size(&self, ui: &egui::Ui, node: &Node, connections: &[crate::graph::Connection]) -> Vec2 {
+        let title = format!("{:?}", node.node_type);
+        let title_width = ui.painter().layout(title, egui::FontId::proportional(14.0 * self.zoom), Color32::WHITE, f32::INFINITY).rect.width();
+        
+        // Dynamic height based on number of ports
+        let port_count = node.inputs.len().max(node.outputs.len());
+        let height = (40.0 + port_count as f32 * 25.0) * self.zoom;
+        
+        let mut max_inline_width: f32 = 0.0;
+        for input in &node.inputs {
+            let is_connected = connections.iter().any(|c| c.to_node == node.id && c.to_port == input.name);
+            if !is_connected && input.data_type != DataType::ExecutionFlow {
+                max_inline_width = max_inline_width.max(100.0 * self.zoom);
+            }
+        }
+        
+        let min_width = 150.0 * self.zoom;
+        let width = min_width.max(title_width + 40.0 * self.zoom + max_inline_width);
+        
+        Vec2::new(width, height)
     }
     
     fn get_type_color(&self, dt: &DataType) -> Color32 {

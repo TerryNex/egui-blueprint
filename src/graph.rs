@@ -33,6 +33,7 @@ pub struct Node {
 pub struct Port {
     pub name: String,
     pub data_type: DataType,
+    pub default_value: VariableValue,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

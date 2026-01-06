@@ -50,13 +50,14 @@ impl Default for MyApp {
 
 impl MyApp {
     fn add_test_nodes(&mut self) {
+        use crate::graph::VariableValue;
         let id1 = Uuid::new_v4();
         self.graph.nodes.insert(id1, Node {
             id: id1,
             node_type: NodeType::BlueprintFunction { name: "Event Tick".into() },
             position: (100.0, 100.0),
             inputs: vec![],
-            outputs: vec![Port { name: "Next".into(), data_type: DataType::ExecutionFlow }],
+            outputs: vec![Port { name: "Next".into(), data_type: DataType::ExecutionFlow, default_value: VariableValue::None }],
         });
         
         let id2 = Uuid::new_v4();
@@ -65,10 +66,10 @@ impl MyApp {
             node_type: NodeType::BlueprintFunction { name: "Print String".into() },
             position: (400.0, 100.0),
             inputs: vec![
-                Port { name: "In".into(), data_type: DataType::ExecutionFlow },
-                Port { name: "String".into(), data_type: DataType::String },
+                Port { name: "In".into(), data_type: DataType::ExecutionFlow, default_value: VariableValue::None },
+                Port { name: "String".into(), data_type: DataType::String, default_value: VariableValue::String("Hello".into()) },
             ],
-            outputs: vec![Port { name: "Next".into(), data_type: DataType::ExecutionFlow }],
+            outputs: vec![Port { name: "Next".into(), data_type: DataType::ExecutionFlow, default_value: VariableValue::None }],
         });
     }
 }
