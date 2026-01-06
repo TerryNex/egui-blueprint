@@ -16,19 +16,36 @@ pub enum NodeType {
     BlueprintFunction { name: String },
     Branch,
     ForLoop,
+    WhileLoop,
     GetVariable { name: String },
     SetVariable { name: String },
+    // Math operations
     Add,
     Subtract,
     Multiply,
     Divide,
+    // Comparison operations
     Equals,
+    NotEquals,
     GreaterThan,
+    GreaterThanOrEqual,
     LessThan,
+    LessThanOrEqual,
+    // Logic operations
+    And,
+    Or,
+    Not,
+    // Other
     InputParam, 
     OutputParam,
     // Entry point for the graph
     Entry,
+    // Type conversions
+    ToInteger,
+    ToFloat,
+    ToString,
+    // Timing
+    Delay,
 }
 
 impl Default for NodeType {

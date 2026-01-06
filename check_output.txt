@@ -1,0 +1,29 @@
+    Checking egui_blueprint v0.1.0 (/Users/terry/RustroverProjects/egui-blueprint)
+error[E0425]: cannot find value `changed` in this scope
+   --> src/editor.rs:578:21
+    |
+578 |                     changed = true;
+    |                     ^^^^^^^
+    |
+help: you might have meant to introduce a new binding
+    |
+578 |                     let changed = true;
+    |                     +++
+
+warning: use of deprecated method `eframe::egui::Ui::allocate_new_ui`: Use `scope_builder` instead
+   --> src/editor.rs:529:16
+    |
+529 |             ui.allocate_new_ui(egui::UiBuilder::new().max_rect(edit_rect), |ui| {
+    |                ^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated method `eframe::egui::Ui::allocate_new_ui`: Use `scope_builder` instead
+   --> src/editor.rs:548:40
+    |
+548 |                 let inner_changed = ui.allocate_new_ui(egui::UiBuilder::new().max_rect(edit_rect), |ui| {
+    |                                        ^^^^^^^^^^^^^^^
+
+For more information about this error, try `rustc --explain E0425`.
+warning: `egui_blueprint` (bin "egui_blueprint") generated 2 warnings
+error: could not compile `egui_blueprint` (bin "egui_blueprint") due to 1 previous error; 2 warnings emitted
