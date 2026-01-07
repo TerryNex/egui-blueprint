@@ -7,22 +7,16 @@
         50,
         255
       ],
-      "Default": [
-        100,
-        100,
-        100,
-        255
-      ],
       "Math": [
         50,
         150,
         100,
         255
       ],
-      "Variable": [
-        150,
+      "Default": [
         100,
-        50,
+        100,
+        100,
         255
       ],
       "Function": [
@@ -30,9 +24,16 @@
         100,
         200,
         255
+      ],
+      "Variable": [
+        150,
+        100,
+        50,
+        255
       ]
     },
     "use_gradient_connections": true
   },
-  "history_max_records": 1000
+  "history_max_records": 1000,
+  "last_script_name": "blueprint"
 }

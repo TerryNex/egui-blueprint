@@ -48,6 +48,15 @@
 
 - **Status:** `[ ]`
 - **Issue:** Alternative to z-order layering - prevent node overlap by pushing nodes away.
+
+### Bug #27: NodeType Block Click Offset Near Left/Top Edges
+
+- **Status:** `[ ]`
+- **Issue:** When nodes are positioned near or beyond the left/top edge of the canvas (after panning), the NodeType block's clickable area is offset from its visual position. Connection lines do NOT have this offset - only the node blocks are affected.
+- **Root Cause:** Likely a mismatch between rendering coordinates and hit-testing coordinates in `draw_node()`. The VIRTUAL_OFFSET or clip_rect may not be consistently applied for node interaction vs. rendering.
+- **Observation:** The offset only occurs when objects approach or exceed the left or top side of the viewport. Right and bottom directions work correctly.
+- **Proposed Solution:** Review the coordinate transformation in `draw_node()` to ensure `to_screen()` and hit-testing use the same reference frame. May need to separate visual offset from interaction offset.
+- **Complexity:** Medium-High
 - **Implementation:** Detect collision during drag and push blocking nodes out of the way.
 - **Complexity:** Medium-High
 
@@ -63,8 +72,9 @@
 
 ### Feature #2: Secondary Canvas Center for Reset
 
-- **Status:** `[ ]`
+- **Status:** `[x]` ✅ COMPLETED
 - **Issue:** Canvas reset position should center on all existing NodeTypes rather than origin (0,0).
+- **Solution:** "Center" button now calculates bounding box of all nodes and pans to their center.
 - **Complexity:** Low-Medium
 
 ### Feature #3: Font Size Settings
@@ -75,8 +85,9 @@
 
 ### Feature #4: Auto-Load Last Used Script on Startup
 
-- **Status:** `[ ]`
+- **Status:** `[x]` ✅ COMPLETED
 - **Issue:** Program should automatically load the last used script on startup.
+- **Solution:** Added `last_script_name` to AppSettings, loads on startup if found.
 - **Complexity:** Low
 
 ### Feature #6: Node Z-Order by Last Click
@@ -141,17 +152,17 @@
 
 ### Feature #18: Loop Nodes (For, While, Count)
 
-- **Status:** `[/]` IN PROGRESS (Port definitions added, execution pending)
+- **Status:** `[x]` ✅ COMPLETED
 - **Issue:** Need loop control flow nodes for automation scripts.
-- **Done:** ForLoop, WhileLoop port definitions added
-- **TODO:** Implement loop execution logic in executor
+- **Solution:** ForLoop and WhileLoop port definitions added with full execution logic.
+- **Complexity:** Medium
 
 ### Feature #22: Delay Node
 
-- **Status:** `[/]` IN PROGRESS (Port definition added, execution pending)
+- **Status:** `[x]` ✅ COMPLETED
 - **Issue:** Need a delay/wait node for timed automation.
-- **Done:** Delay node type and ports added
-- **TODO:** Implement thread::sleep execution
+- **Solution:** Delay node uses thread::sleep with configurable duration in milliseconds.
+- **Complexity:** Low
 
 ---
 
@@ -284,17 +295,29 @@
 
 ### Bugs
 
-- Bug #8: SetVariable Port Spacing (connection line positions)
-- Bug #19: Canvas Pan Position Drift
+- Bug #25: Node Drag Performance Issue (overlapping nodes lag)
+- Bug #26: Collision-Based Node Pushing (alternative to z-order)
 
-### Features
+### Features (High Priority)
 
-- Feature #1: Node Groups
-- Feature #2: Canvas Center Reset
+- Feature #1: Node Groups (UI implementation - data structure exists in `graph.rs`)
+- Feature #2: Canvas Center Reset (center on all NodeTypes)
 - Feature #3: Font Size Settings
 - Feature #4: Auto-Load Last Script
-- Feature #18: Loop Execution Logic
-- Feature #22: Delay Execution Logic
+
+### Features (Medium Priority - Execution Logic)
+
+- Feature #18: Loop Execution Logic (ForLoop/WhileLoop ports defined, need executor)
+- Feature #22: Delay Execution Logic (port defined, need `thread::sleep` impl)
+
+### Features (Low Priority - New Nodes)
+
+- Sequence Node (execute multiple flows in order)
+- Gate Node (on/off flow control)
+- Modulo, Power, Abs, Min, Max, Clamp, Random (Math nodes)
+- Xor (Logic node)
+- String Operations: Concat, Split, Length, Contains, Replace, Format
+- I/O: ReadInput, FileRead, FileWrite
 
 ---
 
@@ -304,3 +327,4 @@
 2. **Testing:** Run `cargo check` before each commit
 3. **Documentation:** Update README.md when adding new node types
 4. **Changelog:** Record all changes in CHANGELOG.md
+5. **NodeGroup:** Data structure already exists in `graph.rs`, needs UI implementation in `editor.rs`
