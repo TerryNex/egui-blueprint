@@ -1,10 +1,24 @@
 use super::graph::{BlueprintGraph, Node};
 use super::node_types::DataType;
 use eframe::egui;
-use egui::{Color32, Pos2, Rect, Sense, Stroke, Vec2};
+use egui::{Color32, CornerRadius, Pos2, Rect, Sense, Stroke, Vec2};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
+
+pub const VALID_KEYS: &[&str] = &[
+    "return", "space", "backspace", "tab", "escape",
+    "up", "down", "left", "right",
+    "shift", "ctrl", "alt", "command", "option", "meta",
+    "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12",
+    "home", "end", "pageup", "pagedown", "insert", "delete",
+    "capslock", "numlock", "scrolllock", "printscreen", "pause",
+    "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
+    "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
+    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
+];
+
+pub const VALID_BUTTONS: &[&str] = &["left", "right", "middle"];
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ClipboardData {
@@ -20,9 +34,16 @@ impl Default for EditorStyle {
         map.insert("Math".into(), Color32::from_rgb(50, 150, 100));
         map.insert("Variable".into(), Color32::from_rgb(150, 100, 50));
         map.insert("Default".into(), Color32::from_rgb(100, 100, 100));
+        map.insert("Input".into(), Color32::from_rgb(200, 150, 50));
+        map.insert("System".into(), Color32::from_rgb(100, 50, 200));
+        map.insert("Data".into(), Color32::from_rgb(50, 150, 150));
+        map.insert("Image".into(), Color32::from_rgb(200, 50, 150));
+        map.insert("Time".into(), Color32::from_rgb(100, 200, 100));
+        map.insert("String".into(), Color32::from_rgb(200, 100, 100));
         Self {
             header_colors: map,
             use_gradient_connections: true,
+            font_size: 14.0,
         }
     }
 }
@@ -31,7 +52,11 @@ impl Default for EditorStyle {
 pub struct EditorStyle {
     pub header_colors: HashMap<String, Color32>,
     pub use_gradient_connections: bool,
+    #[serde(default = "default_font_size")]
+    pub font_size: f32,
 }
+
+fn default_font_size() -> f32 { 14.0 }
 
 pub struct GraphEditor {
     pub pan: Vec2,
@@ -49,6 +74,10 @@ pub struct GraphEditor {
     pub next_z_order: u64,
     /// Node ID currently being edited for display name (double-click on header)
     pub editing_node_name: Option<Uuid>,
+    /// Currently hovered port (node_id, port_name, is_input) for visual feedback
+    pub hovered_port: Option<(Uuid, String, bool)>,
+    /// Group ID currently being edited for name (double-click on header)
+    pub editing_group_name: Option<Uuid>,
 }
 
 impl Default for GraphEditor {
@@ -68,6 +97,8 @@ impl Default for GraphEditor {
             show_settings: false,
             next_z_order: 1,
             editing_node_name: None,
+            hovered_port: None,
+            editing_group_name: None,
         }
     }
 }
@@ -171,8 +202,8 @@ impl GraphEditor {
         let painter = ui.painter();
         painter.rect_filled(clip_rect, 0.0, Color32::from_gray(32)); // Background
 
-        // TODO: Draw groups (behind nodes and connections) - Feature not yet implemented
-        // self.draw_groups(ui, graph, canvas_offset, input_primary_pressed);
+        // Draw groups (behind nodes and connections)
+        self.draw_groups(ui, graph, canvas_offset, input_primary_pressed);
 
         // Draw connections
         self.draw_connections(ui, graph, &node_sizes);
@@ -213,10 +244,13 @@ impl GraphEditor {
                 Some(n) => n,
                 None => continue,
             };
+            
+            // Use child_ui with clip_rect to prevent layout cursor accumulation between nodes
+            // This ensures each node's ui.interact() and ui.scope_builder() don't affect other nodes
             let (
                 drag_delta,
                 start_connect,
-                clicked,
+                _clicked,
                 right_clicked,
                 clicked_port,
                 pressed,
@@ -224,14 +258,19 @@ impl GraphEditor {
                 node_changed,
                 delete,
                 copy,
-            ) = self.draw_node(
-                ui,
-                node,
-                input_primary_pressed,
-                input_primary_released,
-                &graph.connections,
-                &node_sizes,
-            );
+            ) = {
+                let mut child_ui = ui.new_child(egui::UiBuilder::new().max_rect(clip_rect));
+
+                self.draw_node(
+                    &mut child_ui,
+                    node,
+                    input_primary_pressed,
+                    input_primary_released,
+                    &graph.connections,
+                    &node_sizes,
+                )
+            };
+
 
             if node_changed {
                 changed = true;
@@ -264,40 +303,50 @@ impl GraphEditor {
                 delete_node_id = Some(node.id);
             }
 
-            if pressed || clicked_port {
+            if pressed || clicked_port || right_clicked {
                 interaction_consumed = true;
             }
 
-            if clicked && !clicked_port {
-                // Handle Selection Click (left-click only)
+            // Handle Selection on Press (mouse down) - allows immediate drag
+            if pressed && !clicked_port {
                 if input_modifiers.shift {
+                    // Shift+click toggles selection
                     if self.selected_nodes.contains(&node.id) {
                         self.selected_nodes.remove(&node.id);
                     } else {
                         self.selected_nodes.insert(node.id);
                     }
                 } else if !self.selected_nodes.contains(&node.id) {
+                    // Not selected - select only this node
                     self.selected_nodes.clear();
                     self.selected_nodes.insert(node.id);
                 }
-                // Bring clicked node to front
+                // Else: already selected, keep selection for multi-node drag
+                
+                // Bring pressed node to front
                 bring_to_front_id = Some(node.id);
             }
 
+
             if drag_delta != Vec2::ZERO {
-                // Only respond to drag if no other drag is in progress
-                if self.dragging_node.is_none() || self.dragging_node == Some(node.id) {
-                    // Start drag - move the node immediately even if not selected
-                    if self.dragging_node.is_none() {
-                        self.dragging_node = Some(node.id);
+                // Issue 6: Prevent Middle Mouse from moving nodes
+                // drag_delta comes from child_ui which usually respects Sense.
+                // However, to be absolutely sure, we ensure primary button is down.
+                if input_primary_down {
+                    // Only respond to drag if no other drag is in progress
+                    if self.dragging_node.is_none() || self.dragging_node == Some(node.id) {
+                        // Start drag - move the node immediately even if not selected
+                        if self.dragging_node.is_none() {
+                            self.dragging_node = Some(node.id);
+                        }
+
+                        // Move this node regardless of selection state
+                        node_move_delta = drag_delta;
+                        node_to_move = Some(node.id);
+
+                        // Also move other selected nodes if this one is selected
+                        // (handled later in the move logic)
                     }
-
-                    // Move this node regardless of selection state
-                    node_move_delta = drag_delta;
-                    node_to_move = Some(node.id);
-
-                    // Also move other selected nodes if this one is selected
-                    // (handled later in the move logic)
                 }
             }
             if let Some(event) = start_connect {
@@ -360,7 +409,7 @@ impl GraphEditor {
                 if let Some(mut rect) = self.selection_box {
                     rect.max = pos;
                     self.selection_box = Some(rect);
-                } else if input_primary_pressed {
+                } else if input_primary_pressed && !ui.memory(|m| m.any_popup_open()) {
                     self.selection_box = Some(Rect::from_min_max(pos, pos));
                     // Clear selection on background click
                     if !input_modifiers.shift {
@@ -369,6 +418,86 @@ impl GraphEditor {
                     }
                 }
             }
+        }
+        
+        // Context Menu on Background - Create Group (only if selected nodes are not already grouped)
+        if !interaction_consumed && !self.selected_nodes.is_empty() {
+             // Check if any selected node is already in a group
+             let already_grouped: std::collections::HashSet<Uuid> = graph.groups.values()
+                 .flat_map(|g| g.contained_nodes.iter().cloned())
+                 .collect();
+             
+             let selected_in_group: Vec<_> = self.selected_nodes.iter()
+                 .filter(|id| already_grouped.contains(id))
+                 .cloned()
+                 .collect();
+             
+             let can_create_group = selected_in_group.is_empty();
+             
+             // Find group name if selected node is in a group
+             let group_info: Option<(Uuid, String)> = if !selected_in_group.is_empty() {
+                 graph.groups.values()
+                     .find(|g| g.contained_nodes.iter().any(|id| selected_in_group.contains(id)))
+                     .map(|g| (g.id, g.name.clone()))
+             } else {
+                 None
+             };
+             
+             ui.interact(clip_rect, ui.id().with("bg_context"), Sense::click())
+               .context_menu(|ui| {
+                   if can_create_group {
+                       if ui.button("Create Group from Selection").clicked() {
+                            // Calculate bounds of selected nodes
+                            let mut min_x = f32::INFINITY;
+                            let mut min_y = f32::INFINITY;
+                            let mut max_x = f32::NEG_INFINITY;
+                            let mut max_y = f32::NEG_INFINITY;
+                            
+                            let nodes: Vec<Uuid> = self.selected_nodes.iter().cloned().collect();
+                            
+                            for id in &nodes {
+                                if let Some(node) = graph.nodes.get(id) {
+                                    min_x = min_x.min(node.position.0);
+                                    min_y = min_y.min(node.position.1);
+                                    let size = node_sizes.get(id).cloned().unwrap_or(Vec2::new(150.0, 100.0));
+                                    let node_width = size.x / self.zoom;
+                                    let node_height = size.y / self.zoom;
+                                    
+                                    max_x = max_x.max(node.position.0 + node_width);
+                                    max_y = max_y.max(node.position.1 + node_height);
+                                }
+                            }
+                            
+                            if min_x != f32::INFINITY {
+                                let padding = 20.0;
+                                let group_id = Uuid::new_v4();
+                                let group = crate::graph::NodeGroup {
+                                    id: group_id,
+                                    name: "New Group".into(),
+                                    position: (min_x - padding, min_y - padding - 30.0),
+                                    size: (max_x - min_x + padding * 2.0, max_y - min_y + padding * 2.0 + 30.0),
+                                    color: [100, 100, 100, 255],
+                                    contained_nodes: nodes,
+                                };
+                                graph.groups.insert(group_id, group);
+                                ui.close();
+                            }
+                       }
+                   } else if let Some((group_id, group_name)) = group_info {
+                       // Node is already in a group - show group name and allow navigation
+                       let label = format!("📁 In Group: {}", if group_name.is_empty() { "Unnamed" } else { &group_name });
+                       if ui.button(&label).clicked() {
+                           // Pan to group
+                           if let Some(group) = graph.groups.get(&group_id) {
+                               let center = ui.ctx().available_rect().center().to_vec2();
+                               let virtual_offset = Vec2::new(5000.0, 5000.0);
+                               let group_pos = Vec2::new(group.position.0, group.position.1) + virtual_offset;
+                               self.pan = center - group_pos * self.zoom;
+                           }
+                           ui.close();
+                       }
+                   }
+               });
         }
 
         // Draw Selection Box with dashed lines
@@ -492,10 +621,33 @@ impl GraphEditor {
                         from_node: from,
                         from_port,
                         to_node: to,
-                        to_port,
+                        to_port: to_port.clone(),
                     });
                     self.connection_start = None;
                     changed = true;
+                    
+                    // Dynamic port expansion for StringJoin nodes
+                    // When connecting to a StringJoin input, check if we need to add more ports
+                    if let Some(target_node) = graph.nodes.get_mut(&to) {
+                        if matches!(target_node.node_type, crate::node_types::NodeType::StringJoin) {
+                            // Check if the last input port is now connected
+                            if let Some(last_input) = target_node.inputs.last() {
+                                let last_name = last_input.name.clone();
+                                let last_is_connected = graph.connections.iter()
+                                    .any(|c| c.to_node == to && c.to_port == last_name);
+                                
+                                if last_is_connected {
+                                    // Add a new input port
+                                    let new_idx = target_node.inputs.len();
+                                    target_node.inputs.push(super::graph::Port {
+                                        name: format!("Input {}", new_idx),
+                                        data_type: super::node_types::DataType::Custom("Any".into()),
+                                        default_value: super::graph::VariableValue::String("".into()),
+                                    });
+                                }
+                            }
+                        }
+                    }
                 } else {
                     self.connection_start = Some((id, port, is_input));
                 }
@@ -520,7 +672,7 @@ impl GraphEditor {
                 for event in &i.events {
                     if let egui::Event::Text(text) = event {
                         if !text.trim().is_empty() {
-                            if let Some(pos) = pointer_pos {
+                            if let Some(_pos) = pointer_pos {
                                 // We need to mutate self, so we can't be in immutable borrow if we want to set node_finder immediately?
                                 // Actually this closure borrows i (input), but we need to set self.node_finder.
                                 // Rust might complain if we borrow self mutably outside.
@@ -553,13 +705,16 @@ impl GraphEditor {
             }
         }
 
-        // Quick Add Menu (Spacebar)
-        if input_space && self.node_finder.is_none() {
+        // Quick Add Menu (Spacebar) - only if not editing text
+        let any_text_edit_has_focus = ui.ctx().memory(|m| m.focused().is_some());
+        if input_space && self.node_finder.is_none() && self.editing_node_name.is_none() && !any_text_edit_has_focus {
+
             if let Some(pos) = pointer_pos {
                 self.node_finder = Some(pos);
                 self.node_finder_query.clear();
             }
         }
+
 
         if let Some(pos) = self.node_finder {
             let mut open = true;
@@ -570,10 +725,19 @@ impl GraphEditor {
                 .collapsible(false)
                 .resizable(false)
                 .title_bar(false)
+                .max_height(300.0)
                 .open(&mut open)
                 .show(ui.ctx(), |ui| {
                     ui.text_edit_singleline(&mut self.node_finder_query)
                         .request_focus();
+                    
+                    egui::ScrollArea::vertical()
+                        .max_height(250.0)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                        ui.set_min_width(200.0);
+
+
                     let options = vec![
                         // Events
                         (
@@ -593,11 +757,20 @@ impl GraphEditor {
                         ("For Loop", crate::node_types::NodeType::ForLoop),
                         ("While Loop", crate::node_types::NodeType::WhileLoop),
                         ("Delay", crate::node_types::NodeType::Delay),
+                        ("Sequence", crate::node_types::NodeType::Sequence),
+                        ("Gate", crate::node_types::NodeType::Gate),
                         // Math
                         ("Add", crate::node_types::NodeType::Add),
                         ("Subtract", crate::node_types::NodeType::Subtract),
                         ("Multiply", crate::node_types::NodeType::Multiply),
                         ("Divide", crate::node_types::NodeType::Divide),
+                        ("Modulo (%)", crate::node_types::NodeType::Modulo),
+                        ("Power (^)", crate::node_types::NodeType::Power),
+                        ("Abs", crate::node_types::NodeType::Abs),
+                        ("Min", crate::node_types::NodeType::Min),
+                        ("Max", crate::node_types::NodeType::Max),
+                        ("Clamp", crate::node_types::NodeType::Clamp),
+                        ("Random", crate::node_types::NodeType::Random),
                         // Comparison
                         ("Equals (==)", crate::node_types::NodeType::Equals),
                         ("Not Equals (!=)", crate::node_types::NodeType::NotEquals),
@@ -615,10 +788,24 @@ impl GraphEditor {
                         ("And (&&)", crate::node_types::NodeType::And),
                         ("Or (||)", crate::node_types::NodeType::Or),
                         ("Not (!)", crate::node_types::NodeType::Not),
+                        ("Xor (^)", crate::node_types::NodeType::Xor),
+                        // String Operations
+                        ("Concat", crate::node_types::NodeType::Concat),
+                        ("Split", crate::node_types::NodeType::Split),
+                        ("Length", crate::node_types::NodeType::Length),
+                        ("Contains", crate::node_types::NodeType::Contains),
+                        ("Replace", crate::node_types::NodeType::Replace),
+                        ("Format", crate::node_types::NodeType::Format),
+                        ("String Join", crate::node_types::NodeType::StringJoin),
+                        ("String Between", crate::node_types::NodeType::StringBetween),
                         // Conversions
                         ("To Integer", crate::node_types::NodeType::ToInteger),
                         ("To Float", crate::node_types::NodeType::ToFloat),
                         ("To String", crate::node_types::NodeType::ToString),
+                        // I/O
+                        ("Read Input", crate::node_types::NodeType::ReadInput),
+                        ("File Read", crate::node_types::NodeType::FileRead),
+                        ("File Write", crate::node_types::NodeType::FileWrite),
                         // Variables
                         (
                             "Get Variable",
@@ -632,25 +819,91 @@ impl GraphEditor {
                                 name: "MyVar".into(),
                             },
                         ),
+                        // System Control
+                        ("Run Command", crate::node_types::NodeType::RunCommand),
+                        ("Launch App", crate::node_types::NodeType::LaunchApp),
+                        ("Close App", crate::node_types::NodeType::CloseApp),
+                        ("Focus Window", crate::node_types::NodeType::FocusWindow),
+                        ("Get Window Position", crate::node_types::NodeType::GetWindowPosition),
+                        ("Set Window Position", crate::node_types::NodeType::SetWindowPosition),
+                        // Desktop Input Automation (Module A)
+                        ("Click", crate::node_types::NodeType::Click),
+                        ("Double Click", crate::node_types::NodeType::DoubleClick),
+                        ("Right Click", crate::node_types::NodeType::RightClick),
+                        ("Mouse Move", crate::node_types::NodeType::MouseMove),
+                        ("Mouse Down", crate::node_types::NodeType::MouseDown),
+                        ("Mouse Up", crate::node_types::NodeType::MouseUp),
+                        ("Scroll", crate::node_types::NodeType::Scroll),
+                        ("Key Press", crate::node_types::NodeType::KeyPress),
+                        ("Key Down", crate::node_types::NodeType::KeyDown),
+                        ("Key Up", crate::node_types::NodeType::KeyUp),
+                        ("Type Text", crate::node_types::NodeType::TypeText),
+                        ("Hot Key", crate::node_types::NodeType::HotKey),
+                        // Data Operations (Module H)
+                        ("Array Create", crate::node_types::NodeType::ArrayCreate),
+                        ("Array Push", crate::node_types::NodeType::ArrayPush),
+                        ("Array Pop", crate::node_types::NodeType::ArrayPop),
+                        ("Array Get", crate::node_types::NodeType::ArrayGet),
+                        ("Array Set", crate::node_types::NodeType::ArraySet),
+                        ("Array Length", crate::node_types::NodeType::ArrayLength),
+                        ("JSON Parse", crate::node_types::NodeType::JSONParse),
+                        ("JSON Stringify", crate::node_types::NodeType::JSONStringify),
+                        ("HTTP Request", crate::node_types::NodeType::HTTPRequest),
+                        // Screenshot & Image Tools (Module C)
+                        ("Screen Capture", crate::node_types::NodeType::ScreenCapture),
+                        ("Save Screenshot", crate::node_types::NodeType::SaveScreenshot),
+                        // Image Recognition (Module D)
+                        ("Get Pixel Color", crate::node_types::NodeType::GetPixelColor),
+                        ("Find Color", crate::node_types::NodeType::FindColor),
+                        ("Wait For Color", crate::node_types::NodeType::WaitForColor),
+                        ("Find Image", crate::node_types::NodeType::FindImage),
+                        ("Wait For Image", crate::node_types::NodeType::WaitForImage),
+                        ("Image Similarity", crate::node_types::NodeType::ImageSimilarity),
                     ];
 
+
+                    // Fuzzy search: remove whitespace and support abbreviation matching
+                    let query_normalized: String = self.node_finder_query
+                        .to_lowercase()
+                        .chars()
+                        .filter(|c| !c.is_whitespace())
+                        .collect();
+                    
                     let filtered_options: Vec<_> = options
                         .into_iter()
                         .filter(|(label, _)| {
-                            self.node_finder_query.is_empty()
-                                || label
-                                    .to_lowercase()
-                                    .contains(&self.node_finder_query.to_lowercase())
+                            if query_normalized.is_empty() {
+                                return true;
+                            }
+                            let label_lower = label.to_lowercase();
+                            let label_no_space: String = label_lower.chars().filter(|c| !c.is_whitespace()).collect();
+                            
+                            // Check if label contains query (ignoring spaces)
+                            if label_no_space.contains(&query_normalized) {
+                                return true;
+                            }
+                            
+                            // Check abbreviation match (first letter of each word)
+                            let abbreviation: String = label.split_whitespace()
+                                .filter_map(|word| word.chars().next())
+                                .map(|c| c.to_lowercase().next().unwrap_or(c))
+                                .collect();
+                            if abbreviation.contains(&query_normalized) {
+                                return true;
+                            }
+                            
+                            false
                         })
                         .collect();
 
-                    let mut activate_first = ui.input(|i| {
+
+                    let activate_first = ui.input(|i| {
                         i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Tab)
                     });
 
                     for (label, node_type) in filtered_options {
                         if ui.button(label).clicked() || activate_first {
-                            activate_first = false;
+                            // activate_first = false; // logic flow breaks anyway
 
                             let id = Uuid::new_v4();
                             let (inputs, outputs) = Self::get_ports_for_type(&node_type);
@@ -674,6 +927,7 @@ impl GraphEditor {
                             break;
                         }
                     }
+                    }); // Close ScrollArea
                 });
 
             if let Some(inner) = window_response {
@@ -699,6 +953,11 @@ impl GraphEditor {
                         "Gradient Connections",
                     );
                     ui.separator();
+                    ui.horizontal(|ui| {
+                        ui.label("Font Size:");
+                        ui.add(egui::Slider::new(&mut self.style.font_size, 8.0..=24.0).suffix("px"));
+                    });
+                    ui.separator();
                     ui.label("Header Colors");
                     for (key, color) in &mut self.style.header_colors {
                         ui.horizontal(|ui| {
@@ -708,6 +967,7 @@ impl GraphEditor {
                     }
                 });
         }
+
 
         if input_primary_released && self.dragging_node.is_some() {
             changed = true;
@@ -731,6 +991,73 @@ impl GraphEditor {
             }
         });
         // Paste is handled via events usually
+
+        // --- Grouping Logic (Cmd+G) ---
+        let mut create_group_action = false;
+        ui.input(|i| {
+            if (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(egui::Key::G) {
+                create_group_action = true;
+            }
+        });
+
+        if create_group_action && !self.selected_nodes.is_empty() {
+             // Calculate bounds of selected nodes
+            let mut min_x = f32::INFINITY;
+            let mut min_y = f32::INFINITY;
+            let mut max_x = f32::NEG_INFINITY;
+            let mut max_y = f32::NEG_INFINITY;
+            
+            let mut nodes: Vec<Uuid> = self.selected_nodes.iter().cloned().collect();
+            
+            // Issue 2: Prevent Double Grouping
+            // Filter out nodes that are already in a group?
+            // Actually, we can check if any of these nodes are in any existing group's contained_nodes list.
+            // But checking all groups is O(N*M). Since N and M are small, it's fine.
+            let already_grouped: std::collections::HashSet<Uuid> = graph.groups.values()
+                .flat_map(|g| g.contained_nodes.clone())
+                .collect();
+                
+            nodes.retain(|id| !already_grouped.contains(id));
+            
+            if nodes.is_empty() {
+                // If all selected were already grouped, maybe we should just return or notify?
+                // For now, just don't create an empty group.
+            } else {
+                for id in &nodes {
+                    if let Some(node) = graph.nodes.get(id) {
+                        min_x = min_x.min(node.position.0);
+                        min_y = min_y.min(node.position.1);
+                        // Approximate size since we don't store it globally yet
+                        // Issue 4: Fix Bounds (Rightmost node cutoff)
+                        // This approximation was 150x100.
+                        // We should try to use the actual size from the previous frame's node_sizes if available.
+                        // We passed node_sizes to draw_connections, but we don't have it here easily unless we store it in self.
+                        // Let's assume a safer default or try to get it.
+                        // Actually, we can just use a slightly larger default or update this logic later.
+                        let node_width = 200.0; // Increased width safety
+                        let node_height = 150.0;
+                        
+                        max_x = max_x.max(node.position.0 + node_width);
+                        max_y = max_y.max(node.position.1 + node_height);
+                    }
+                }
+                
+                if min_x != f32::INFINITY {
+                    let padding = 30.0;
+                    let group_id = Uuid::new_v4();
+                    let group = crate::graph::NodeGroup {
+                        id: group_id,
+                        name: "New Group".into(),
+                        position: (min_x - padding, min_y - padding - 30.0), // Extra top padding for header
+                        size: (max_x - min_x + padding * 2.0, max_y - min_y + padding * 2.0 + 30.0),
+                        color: [100, 100, 100, 255],
+                        contained_nodes: nodes,
+                    };
+                    graph.groups.insert(group_id, group);
+                    changed = true;
+                }
+            }
+        }
 
         // Handle Copy
         if copy_action && !self.selected_nodes.is_empty() {
@@ -1227,9 +1554,1554 @@ impl GraphEditor {
                     default_value: VariableValue::None,
                 }],
             ),
+            // Modulo (%)
+            NodeType::Modulo => (
+                vec![
+                    Port {
+                        name: "A".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "B".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(1),
+                    },
+                ],
+                vec![Port {
+                    name: "Out".into(),
+                    data_type: DataType::Integer,
+                    default_value: VariableValue::Integer(0),
+                }],
+            ),
+            // Power (^)
+            NodeType::Power => (
+                vec![
+                    Port {
+                        name: "Base".into(),
+                        data_type: DataType::Float,
+                        default_value: VariableValue::Float(2.0),
+                    },
+                    Port {
+                        name: "Exponent".into(),
+                        data_type: DataType::Float,
+                        default_value: VariableValue::Float(2.0),
+                    },
+                ],
+                vec![Port {
+                    name: "Out".into(),
+                    data_type: DataType::Float,
+                    default_value: VariableValue::Float(0.0),
+                }],
+            ),
+            // Abs
+            NodeType::Abs => (
+                vec![Port {
+                    name: "In".into(),
+                    data_type: DataType::Float,
+                    default_value: VariableValue::Float(0.0),
+                }],
+                vec![Port {
+                    name: "Out".into(),
+                    data_type: DataType::Float,
+                    default_value: VariableValue::Float(0.0),
+                }],
+            ),
+            // Min
+            NodeType::Min => (
+                vec![
+                    Port {
+                        name: "A".into(),
+                        data_type: DataType::Float,
+                        default_value: VariableValue::Float(0.0),
+                    },
+                    Port {
+                        name: "B".into(),
+                        data_type: DataType::Float,
+                        default_value: VariableValue::Float(0.0),
+                    },
+                ],
+                vec![Port {
+                    name: "Out".into(),
+                    data_type: DataType::Float,
+                    default_value: VariableValue::Float(0.0),
+                }],
+            ),
+            // Max
+            NodeType::Max => (
+                vec![
+                    Port {
+                        name: "A".into(),
+                        data_type: DataType::Float,
+                        default_value: VariableValue::Float(0.0),
+                    },
+                    Port {
+                        name: "B".into(),
+                        data_type: DataType::Float,
+                        default_value: VariableValue::Float(0.0),
+                    },
+                ],
+                vec![Port {
+                    name: "Out".into(),
+                    data_type: DataType::Float,
+                    default_value: VariableValue::Float(0.0),
+                }],
+            ),
+            // Clamp
+            NodeType::Clamp => (
+                vec![
+                    Port {
+                        name: "Value".into(),
+                        data_type: DataType::Float,
+                        default_value: VariableValue::Float(0.0),
+                    },
+                    Port {
+                        name: "Min".into(),
+                        data_type: DataType::Float,
+                        default_value: VariableValue::Float(0.0),
+                    },
+                    Port {
+                        name: "Max".into(),
+                        data_type: DataType::Float,
+                        default_value: VariableValue::Float(1.0),
+                    },
+                ],
+                vec![Port {
+                    name: "Out".into(),
+                    data_type: DataType::Float,
+                    default_value: VariableValue::Float(0.0),
+                }],
+            ),
+            // Random
+            NodeType::Random => (
+                vec![
+                    Port {
+                        name: "Min".into(),
+                        data_type: DataType::Float,
+                        default_value: VariableValue::Float(0.0),
+                    },
+                    Port {
+                        name: "Max".into(),
+                        data_type: DataType::Float,
+                        default_value: VariableValue::Float(1.0),
+                    },
+                ],
+                vec![Port {
+                    name: "Out".into(),
+                    data_type: DataType::Float,
+                    default_value: VariableValue::Float(0.0),
+                }],
+            ),
+            // Xor
+            NodeType::Xor => (
+                vec![
+                    Port {
+                        name: "A".into(),
+                        data_type: DataType::Boolean,
+                        default_value: VariableValue::Boolean(false),
+                    },
+                    Port {
+                        name: "B".into(),
+                        data_type: DataType::Boolean,
+                        default_value: VariableValue::Boolean(false),
+                    },
+                ],
+                vec![Port {
+                    name: "Out".into(),
+                    data_type: DataType::Boolean,
+                    default_value: VariableValue::Boolean(false),
+                }],
+            ),
+            // Sequence - executes multiple flows in order
+            NodeType::Sequence => (
+                vec![Port {
+                    name: "In".into(),
+                    data_type: DataType::ExecutionFlow,
+                    default_value: VariableValue::None,
+                }],
+                vec![
+                    Port {
+                        name: "Then 0".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Then 1".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Then 2".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                ],
+            ),
+            // Gate - on/off flow control
+            NodeType::Gate => (
+                vec![
+                    Port {
+                        name: "In".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Open".into(),
+                        data_type: DataType::Boolean,
+                        default_value: VariableValue::Boolean(true),
+                    },
+                ],
+                vec![Port {
+                    name: "Out".into(),
+                    data_type: DataType::ExecutionFlow,
+                    default_value: VariableValue::None,
+                }],
+            ),
+            // Concat
+            NodeType::Concat => (
+                vec![
+                    Port {
+                        name: "A".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("".into()),
+                    },
+                    Port {
+                        name: "B".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("".into()),
+                    },
+                ],
+                vec![Port {
+                    name: "Out".into(),
+                    data_type: DataType::String,
+                    default_value: VariableValue::String("".into()),
+                }],
+            ),
+            // Split
+            NodeType::Split => (
+                vec![
+                    Port {
+                        name: "String".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("".into()),
+                    },
+                    Port {
+                        name: "Delimiter".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String(",".into()),
+                    },
+                    Port {
+                        name: "Index".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                ],
+                vec![Port {
+                    name: "Out".into(),
+                    data_type: DataType::String,
+                    default_value: VariableValue::String("".into()),
+                }],
+            ),
+            // Length
+            NodeType::Length => (
+                vec![Port {
+                    name: "String".into(),
+                    data_type: DataType::String,
+                    default_value: VariableValue::String("".into()),
+                }],
+                vec![Port {
+                    name: "Out".into(),
+                    data_type: DataType::Integer,
+                    default_value: VariableValue::Integer(0),
+                }],
+            ),
+            // Contains
+            NodeType::Contains => (
+                vec![
+                    Port {
+                        name: "String".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("".into()),
+                    },
+                    Port {
+                        name: "Substring".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("".into()),
+                    },
+                ],
+                vec![Port {
+                    name: "Out".into(),
+                    data_type: DataType::Boolean,
+                    default_value: VariableValue::Boolean(false),
+                }],
+            ),
+            // Replace
+            NodeType::Replace => (
+                vec![
+                    Port {
+                        name: "String".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("".into()),
+                    },
+                    Port {
+                        name: "From".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("".into()),
+                    },
+                    Port {
+                        name: "To".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("".into()),
+                    },
+                ],
+                vec![Port {
+                    name: "Out".into(),
+                    data_type: DataType::String,
+                    default_value: VariableValue::String("".into()),
+                }],
+            ),
+            // Format
+            NodeType::Format => (
+                vec![
+                    Port {
+                        name: "Template".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("Hello {}!".into()),
+                    },
+                    Port {
+                        name: "Arg0".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("".into()),
+                    },
+                ],
+                vec![Port {
+                    name: "Out".into(),
+                    data_type: DataType::String,
+                    default_value: VariableValue::String("".into()),
+                }],
+            ),
+            // StringJoin - Dynamic string concatenation with auto-expanding inputs
+            NodeType::StringJoin => (
+                vec![
+                    Port {
+                        name: "Input 0".into(),
+                        data_type: DataType::Custom("Any".into()),
+                        default_value: VariableValue::String("".into()),
+                    },
+                    Port {
+                        name: "Input 1".into(),
+                        data_type: DataType::Custom("Any".into()),
+                        default_value: VariableValue::String("".into()),
+                    },
+                ],
+                vec![Port {
+                    name: "Out".into(),
+                    data_type: DataType::String,
+                    default_value: VariableValue::String("".into()),
+                }],
+            ),
+            // StringBetween - Extract content between two delimiter strings
+            NodeType::StringBetween => (
+                vec![
+                    Port {
+                        name: "Source".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("".into()),
+                    },
+                    Port {
+                        name: "Before".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("".into()),
+                    },
+                    Port {
+                        name: "After".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("".into()),
+                    },
+                ],
+                vec![Port {
+                    name: "Out".into(),
+                    data_type: DataType::String,
+                    default_value: VariableValue::String("".into()),
+                }],
+            ),
+            // ReadInput - placeholder for future interactive input
+            NodeType::ReadInput => (
+                vec![
+                    Port {
+                        name: "In".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Prompt".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("Enter value:".into()),
+                    },
+                ],
+                vec![
+                    Port {
+                        name: "Next".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Value".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("".into()),
+                    },
+                ],
+            ),
+            // FileRead
+            NodeType::FileRead => (
+                vec![Port {
+                    name: "Path".into(),
+                    data_type: DataType::String,
+                    default_value: VariableValue::String("".into()),
+                }],
+                vec![
+                    Port {
+                        name: "Content".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("".into()),
+                    },
+                    Port {
+                        name: "Success".into(),
+                        data_type: DataType::Boolean,
+                        default_value: VariableValue::Boolean(false),
+                    },
+                ],
+            ),
+            // FileWrite
+            NodeType::FileWrite => (
+                vec![
+                    Port {
+                        name: "In".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Path".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("".into()),
+                    },
+                    Port {
+                        name: "Content".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("".into()),
+                    },
+                ],
+                vec![
+                    Port {
+                        name: "Next".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Success".into(),
+                        data_type: DataType::Boolean,
+                        default_value: VariableValue::Boolean(false),
+                    },
+                ],
+            ),
+            // System Control: RunCommand
+            NodeType::RunCommand => (
+                vec![
+                    Port {
+                        name: "In".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Command".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("".into()),
+                    },
+                    Port {
+                        name: "Args".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("".into()),
+                    },
+                ],
+                vec![
+                    Port {
+                        name: "Next".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Output".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("".into()),
+                    },
+                    Port {
+                        name: "ExitCode".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "Success".into(),
+                        data_type: DataType::Boolean,
+                        default_value: VariableValue::Boolean(false),
+                    },
+                ],
+            ),
+            // System Control: LaunchApp
+            NodeType::LaunchApp => (
+                vec![
+                    Port {
+                        name: "In".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Path".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("".into()),
+                    },
+                    Port {
+                        name: "Args".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("".into()),
+                    },
+                ],
+                vec![
+                    Port {
+                        name: "Next".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Success".into(),
+                        data_type: DataType::Boolean,
+                        default_value: VariableValue::Boolean(false),
+                    },
+                ],
+            ),
+            // System Control: CloseApp
+            NodeType::CloseApp => (
+                vec![
+                    Port {
+                        name: "In".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Name".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("".into()),
+                    },
+                ],
+                vec![
+                    Port {
+                        name: "Next".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Success".into(),
+                        data_type: DataType::Boolean,
+                        default_value: VariableValue::Boolean(false),
+                    },
+                ],
+            ),
+            // System Control: FocusWindow
+            NodeType::FocusWindow => (
+                vec![
+                    Port {
+                        name: "In".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Title".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("".into()),
+                    },
+                ],
+                vec![
+                    Port {
+                        name: "Next".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Success".into(),
+                        data_type: DataType::Boolean,
+                        default_value: VariableValue::Boolean(false),
+                    },
+                ],
+            ),
+            // System Control: GetWindowPosition
+            NodeType::GetWindowPosition => (
+                vec![Port {
+                    name: "Title".into(),
+                    data_type: DataType::String,
+                    default_value: VariableValue::String("".into()),
+                }],
+                vec![
+                    Port {
+                        name: "X".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "Y".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "Width".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "Height".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "Found".into(),
+                        data_type: DataType::Boolean,
+                        default_value: VariableValue::Boolean(false),
+                    },
+                ],
+            ),
+            // System Control: SetWindowPosition
+            NodeType::SetWindowPosition => (
+                vec![
+                    Port {
+                        name: "In".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Title".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("".into()),
+                    },
+                    Port {
+                        name: "X".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "Y".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "Width".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(800),
+                    },
+                    Port {
+                        name: "Height".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(600),
+                    },
+                ],
+                vec![
+                    Port {
+                        name: "Next".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Success".into(),
+                        data_type: DataType::Boolean,
+                        default_value: VariableValue::Boolean(false),
+                    },
+                ],
+            ),
+            // Desktop Input Automation (Module A)
+            // Click - Click at screen coordinates (x, y)
+            NodeType::Click => (
+                vec![
+                    Port {
+                        name: "In".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "X".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "Y".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                ],
+                vec![Port {
+                    name: "Next".into(),
+                    data_type: DataType::ExecutionFlow,
+                    default_value: VariableValue::None,
+                }],
+            ),
+            // DoubleClick - Double-click at coordinates
+            NodeType::DoubleClick => (
+                vec![
+                    Port {
+                        name: "In".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "X".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "Y".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                ],
+                vec![Port {
+                    name: "Next".into(),
+                    data_type: DataType::ExecutionFlow,
+                    default_value: VariableValue::None,
+                }],
+            ),
+            // RightClick - Right-click at coordinates
+            NodeType::RightClick => (
+                vec![
+                    Port {
+                        name: "In".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "X".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "Y".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                ],
+                vec![Port {
+                    name: "Next".into(),
+                    data_type: DataType::ExecutionFlow,
+                    default_value: VariableValue::None,
+                }],
+            ),
+            // MouseMove - Move cursor to coordinates
+            NodeType::MouseMove => (
+                vec![
+                    Port {
+                        name: "In".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "X".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "Y".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                ],
+                vec![Port {
+                    name: "Next".into(),
+                    data_type: DataType::ExecutionFlow,
+                    default_value: VariableValue::None,
+                }],
+            ),
+            // MouseDown - Press mouse button without releasing
+            NodeType::MouseDown => (
+                vec![
+                    Port {
+                        name: "In".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Button".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("left".into()),
+                    },
+                ],
+                vec![Port {
+                    name: "Next".into(),
+                    data_type: DataType::ExecutionFlow,
+                    default_value: VariableValue::None,
+                }],
+            ),
+            // MouseUp - Release mouse button
+            NodeType::MouseUp => (
+                vec![
+                    Port {
+                        name: "In".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Button".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("left".into()),
+                    },
+                ],
+                vec![Port {
+                    name: "Next".into(),
+                    data_type: DataType::ExecutionFlow,
+                    default_value: VariableValue::None,
+                }],
+            ),
+            // Scroll - Mouse wheel scroll
+            NodeType::Scroll => (
+                vec![
+                    Port {
+                        name: "In".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "X".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "Y".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(-3),
+                    },
+                ],
+                vec![Port {
+                    name: "Next".into(),
+                    data_type: DataType::ExecutionFlow,
+                    default_value: VariableValue::None,
+                }],
+            ),
+            // KeyPress - Press and release a key
+            NodeType::KeyPress => (
+                vec![
+                    Port {
+                        name: "In".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Key".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("Return".into()),
+                    },
+                ],
+                vec![Port {
+                    name: "Next".into(),
+                    data_type: DataType::ExecutionFlow,
+                    default_value: VariableValue::None,
+                }],
+            ),
+            // KeyDown - Press key without releasing
+            NodeType::KeyDown => (
+                vec![
+                    Port {
+                        name: "In".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Key".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("Shift".into()),
+                    },
+                ],
+                vec![Port {
+                    name: "Next".into(),
+                    data_type: DataType::ExecutionFlow,
+                    default_value: VariableValue::None,
+                }],
+            ),
+            // KeyUp - Release a pressed key
+            NodeType::KeyUp => (
+                vec![
+                    Port {
+                        name: "In".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Key".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("Shift".into()),
+                    },
+                ],
+                vec![Port {
+                    name: "Next".into(),
+                    data_type: DataType::ExecutionFlow,
+                    default_value: VariableValue::None,
+                }],
+            ),
+            // TypeText - Type a string of text
+            NodeType::TypeText => (
+                vec![
+                    Port {
+                        name: "In".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Text".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("Hello World".into()),
+                    },
+                ],
+                vec![Port {
+                    name: "Next".into(),
+                    data_type: DataType::ExecutionFlow,
+                    default_value: VariableValue::None,
+                }],
+            ),
+            // HotKey - Key combinations (Ctrl+C, Cmd+V, etc.)
+            NodeType::HotKey => (
+                vec![
+                    Port {
+                        name: "In".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Key".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("c".into()),
+                    },
+                    Port {
+                        name: "Ctrl".into(),
+                        data_type: DataType::Boolean,
+                        default_value: VariableValue::Boolean(true),
+                    },
+                    Port {
+                        name: "Shift".into(),
+                        data_type: DataType::Boolean,
+                        default_value: VariableValue::Boolean(false),
+                    },
+                    Port {
+                        name: "Alt".into(),
+                        data_type: DataType::Boolean,
+                        default_value: VariableValue::Boolean(false),
+                    },
+                    Port {
+                        name: "Command".into(),
+                        data_type: DataType::Boolean,
+                        default_value: VariableValue::Boolean(false),
+                    },
+                ],
+                vec![Port {
+                    name: "Next".into(),
+                    data_type: DataType::ExecutionFlow,
+                    default_value: VariableValue::None,
+                }],
+            ),
+            // === Module H: Data Operations ===
+            
+            // ArrayCreate - Create an empty array
+            NodeType::ArrayCreate => (
+                vec![],
+                vec![Port {
+                    name: "Array".into(),
+                    data_type: DataType::Array,
+                    default_value: VariableValue::Array(vec![]),
+                }],
+            ),
+            
+            // ArrayPush - Add element to end of array (execution flow)
+            NodeType::ArrayPush => (
+                vec![
+                    Port {
+                        name: "In".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Variable".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("myArray".into()),
+                    },
+                    Port {
+                        name: "Value".into(),
+                        data_type: DataType::Custom("Any".into()),
+                        default_value: VariableValue::None,
+                    },
+                ],
+                vec![Port {
+                    name: "Next".into(),
+                    data_type: DataType::ExecutionFlow,
+                    default_value: VariableValue::None,
+                }],
+            ),
+            
+            // ArrayPop - Remove and return last element (execution flow)
+            NodeType::ArrayPop => (
+                vec![
+                    Port {
+                        name: "In".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Variable".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("myArray".into()),
+                    },
+                ],
+                vec![
+                    Port {
+                        name: "Next".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Value".into(),
+                        data_type: DataType::Custom("Any".into()),
+                        default_value: VariableValue::None,
+                    },
+                ],
+            ),
+            
+            // ArrayGet - Get element by index (pure function)
+            NodeType::ArrayGet => (
+                vec![
+                    Port {
+                        name: "Array".into(),
+                        data_type: DataType::Array,
+                        default_value: VariableValue::Array(vec![]),
+                    },
+                    Port {
+                        name: "Index".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                ],
+                vec![Port {
+                    name: "Value".into(),
+                    data_type: DataType::Custom("Any".into()),
+                    default_value: VariableValue::None,
+                }],
+            ),
+            
+            // ArraySet - Set element by index (execution flow)
+            NodeType::ArraySet => (
+                vec![
+                    Port {
+                        name: "In".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Variable".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("myArray".into()),
+                    },
+                    Port {
+                        name: "Index".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "Value".into(),
+                        data_type: DataType::Custom("Any".into()),
+                        default_value: VariableValue::None,
+                    },
+                ],
+                vec![Port {
+                    name: "Next".into(),
+                    data_type: DataType::ExecutionFlow,
+                    default_value: VariableValue::None,
+                }],
+            ),
+            
+            // ArrayLength - Get length of array (pure function)
+            NodeType::ArrayLength => (
+                vec![Port {
+                    name: "Array".into(),
+                    data_type: DataType::Array,
+                    default_value: VariableValue::Array(vec![]),
+                }],
+                vec![Port {
+                    name: "Length".into(),
+                    data_type: DataType::Integer,
+                    default_value: VariableValue::Integer(0),
+                }],
+            ),
+            
+            // JSONParse - Parse JSON string (pure function)
+            NodeType::JSONParse => (
+                vec![Port {
+                    name: "JSON".into(),
+                    data_type: DataType::String,
+                    default_value: VariableValue::String("{}".into()),
+                }],
+                vec![Port {
+                    name: "Value".into(),
+                    data_type: DataType::Custom("Any".into()),
+                    default_value: VariableValue::None,
+                }],
+            ),
+            
+            // JSONStringify - Convert value to JSON string (pure function)
+            NodeType::JSONStringify => (
+                vec![Port {
+                    name: "Value".into(),
+                    data_type: DataType::Custom("Any".into()),
+                    default_value: VariableValue::None,
+                }],
+                vec![Port {
+                    name: "JSON".into(),
+                    data_type: DataType::String,
+                    default_value: VariableValue::String("".into()),
+                }],
+            ),
+            
+            // HTTPRequest - Make HTTP request (execution flow)
+            NodeType::HTTPRequest => (
+                vec![
+                    Port {
+                        name: "In".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "URL".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("https://api.example.com".into()),
+                    },
+                    Port {
+                        name: "Method".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("GET".into()),
+                    },
+                    Port {
+                        name: "Body".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("".into()),
+                    },
+                ],
+                vec![
+                    Port {
+                        name: "Next".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Response".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("".into()),
+                    },
+                    Port {
+                        name: "Success".into(),
+                        data_type: DataType::Boolean,
+                        default_value: VariableValue::Boolean(false),
+                    },
+                ],
+            ),
+            
+            // Screenshot & Image Tools (Module C)
+            // ScreenCapture - Capture full screen or specific display
+            NodeType::ScreenCapture => (
+                vec![
+                    Port {
+                        name: "In".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Display".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                ],
+                vec![
+                    Port {
+                        name: "Next".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "ImagePath".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("".into()),
+                    },
+                    Port {
+                        name: "Success".into(),
+                        data_type: DataType::Boolean,
+                        default_value: VariableValue::Boolean(false),
+                    },
+                ],
+            ),
+            
+            // SaveScreenshot - Save screenshot to file
+            NodeType::SaveScreenshot => (
+                vec![
+                    Port {
+                        name: "In".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "ImagePath".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("".into()),
+                    },
+                    Port {
+                        name: "Filename".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("screenshot.png".into()),
+                    },
+                ],
+                vec![
+                    Port {
+                        name: "Next".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "SavedPath".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("".into()),
+                    },
+                    Port {
+                        name: "Success".into(),
+                        data_type: DataType::Boolean,
+                        default_value: VariableValue::Boolean(false),
+                    },
+                ],
+            ),
+            
+            // Image Recognition (Module D)
+            // GetPixelColor - Get RGB color at screen coordinates
+            NodeType::GetPixelColor => (
+                vec![
+                    Port {
+                        name: "In".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "X".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "Y".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                ],
+                vec![
+                    Port {
+                        name: "Next".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "R".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "G".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "B".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "Success".into(),
+                        data_type: DataType::Boolean,
+                        default_value: VariableValue::Boolean(false),
+                    },
+                ],
+            ),
+            
+            // FindColor - Search for color in screen region
+            NodeType::FindColor => (
+                vec![
+                    Port {
+                        name: "In".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "R".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(255),
+                    },
+                    Port {
+                        name: "G".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "B".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "Tolerance".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(10),
+                    },
+                    Port {
+                        name: "RegionX".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "RegionY".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "RegionW".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(1920),
+                    },
+                    Port {
+                        name: "RegionH".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(1080),
+                    },
+                ],
+                vec![
+                    Port {
+                        name: "Next".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "X".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "Y".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "Found".into(),
+                        data_type: DataType::Boolean,
+                        default_value: VariableValue::Boolean(false),
+                    },
+                ],
+            ),
+            
+            // WaitForColor - Wait until color appears
+            NodeType::WaitForColor => (
+                vec![
+                    Port {
+                        name: "In".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "R".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(255),
+                    },
+                    Port {
+                        name: "G".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "B".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "X".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "Y".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "Tolerance".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(10),
+                    },
+                    Port {
+                        name: "Timeout".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(5000),
+                    },
+                ],
+                vec![
+                    Port {
+                        name: "Next".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Found".into(),
+                        data_type: DataType::Boolean,
+                        default_value: VariableValue::Boolean(false),
+                    },
+                ],
+            ),
+            
+            // FindImage - Template matching on screen
+            NodeType::FindImage => (
+                vec![
+                    Port {
+                        name: "In".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "ImagePath".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("template.png".into()),
+                    },
+                    Port {
+                        name: "Tolerance".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(10),
+                    },
+                    Port {
+                        name: "RegionX".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "RegionY".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "RegionW".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(1920),
+                    },
+                    Port {
+                        name: "RegionH".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(1080),
+                    },
+                ],
+                vec![
+                    Port {
+                        name: "Next".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "X".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "Y".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "Found".into(),
+                        data_type: DataType::Boolean,
+                        default_value: VariableValue::Boolean(false),
+                    },
+                ],
+            ),
+            
+            // WaitForImage - Wait until image appears on screen
+            NodeType::WaitForImage => (
+                vec![
+                    Port {
+                        name: "In".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "ImagePath".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("template.png".into()),
+                    },
+                    Port {
+                        name: "Tolerance".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(10),
+                    },
+                    Port {
+                        name: "Timeout".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(5000),
+                    },
+                ],
+                vec![
+                    Port {
+                        name: "Next".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "X".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "Y".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "Found".into(),
+                        data_type: DataType::Boolean,
+                        default_value: VariableValue::Boolean(false),
+                    },
+                ],
+            ),
+            
+            // ImageSimilarity - Compare two images with tolerance (pure function)
+            NodeType::ImageSimilarity => (
+                vec![
+                    Port {
+                        name: "ImagePath1".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("image1.png".into()),
+                    },
+                    Port {
+                        name: "ImagePath2".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("image2.png".into()),
+                    },
+                    Port {
+                        name: "Tolerance".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(10),
+                    },
+                ],
+                vec![
+                    Port {
+                        name: "Similarity".into(),
+                        data_type: DataType::Float,
+                        default_value: VariableValue::Float(0.0),
+                    },
+                    Port {
+                        name: "Match".into(),
+                        data_type: DataType::Boolean,
+                        default_value: VariableValue::Boolean(false),
+                    },
+                ],
+            ),
             _ => (vec![], vec![]),
         }
     }
+
 
     fn draw_node(
         &mut self,
@@ -1302,7 +3174,8 @@ impl GraphEditor {
 
         for input in &node.inputs {
             let port_pos = screen_pos + Vec2::new(0.0, y_offset);
-            let port_rect = Rect::from_center_size(port_pos, Vec2::splat(16.0 * self.zoom));
+            // Increased hitbox size from 16 to 24 for easier connection targeting
+            let port_rect = Rect::from_center_size(port_pos, Vec2::splat(24.0 * self.zoom));
             let port_response = ui.interact(
                 port_rect,
                 ui.id().with(node.id).with(&input.name).with("in"),
@@ -1320,6 +3193,10 @@ impl GraphEditor {
             if port_response.contains_pointer() && input_primary_pressed {
                 pressed_any_port = true;
             }
+            // Store hover state for visual feedback during drawing
+            if port_response.hovered() {
+                self.hovered_port = Some((node.id, input.name.clone(), true));
+            }
             y_offset += 25.0 * self.zoom;
         }
 
@@ -1335,7 +3212,8 @@ impl GraphEditor {
 
         for output in &node.outputs {
             let port_pos = screen_pos + Vec2::new(node_rect.width(), y_offset);
-            let port_rect = Rect::from_center_size(port_pos, Vec2::splat(16.0 * self.zoom));
+            // Increased hitbox size from 16 to 24 for easier connection targeting
+            let port_rect = Rect::from_center_size(port_pos, Vec2::splat(24.0 * self.zoom));
             let port_response = ui.interact(
                 port_rect,
                 ui.id().with(node.id).with(&output.name).with("out"),
@@ -1353,22 +3231,25 @@ impl GraphEditor {
             if port_response.contains_pointer() && input_primary_pressed {
                 pressed_any_port = true;
             }
+            // Store hover state for visual feedback during drawing
+            if port_response.hovered() {
+                self.hovered_port = Some((node.id, output.name.clone(), false));
+            }
             y_offset += 25.0 * self.zoom;
         }
 
-        // 2. Allocate Node Background
-        let response = ui.allocate_rect(node_rect, Sense::click_and_drag());
+        // 2. Interact with Node Background
+        let response = ui.interact(node_rect, ui.id().with(node.id).with("node_bg"), Sense::click_and_drag());
         if response.dragged() && !pressed_any_port {
             drag_delta = response.drag_delta() / self.zoom;
         }
-        // Only left-click (primary) should trigger selection changes
-        let clicked = response.clicked_by(egui::PointerButton::Primary);
-        // Right-click detection for context menu - should not change selection if already selected
-        let right_clicked = response.clicked_by(egui::PointerButton::Secondary);
-        let pressed_node =
-            response.drag_started() || (response.contains_pointer() && input_primary_pressed);
 
-        // --- Drawing Logic ---
+        // Click detection
+        let clicked = response.clicked_by(egui::PointerButton::Primary);
+        let right_clicked = response.clicked_by(egui::PointerButton::Secondary);
+        let pressed_node = response.drag_started() || response.hovered() && input_primary_pressed;
+
+
         if self.selected_nodes.contains(&node.id) {
             ui.painter().rect_stroke(
                 node_rect.expand(2.0),
@@ -1398,9 +3279,74 @@ impl GraphEditor {
             crate::node_types::NodeType::Add
             | crate::node_types::NodeType::Subtract
             | crate::node_types::NodeType::Multiply
-            | crate::node_types::NodeType::Divide => "Math",
+            | crate::node_types::NodeType::Divide
+            | crate::node_types::NodeType::Modulo
+            | crate::node_types::NodeType::Power
+            | crate::node_types::NodeType::Abs
+            | crate::node_types::NodeType::Min
+            | crate::node_types::NodeType::Max
+            | crate::node_types::NodeType::Clamp
+            | crate::node_types::NodeType::Random => "Math",
+
             crate::node_types::NodeType::GetVariable { .. }
             | crate::node_types::NodeType::SetVariable { .. } => "Variable",
+
+            crate::node_types::NodeType::StringJoin
+            | crate::node_types::NodeType::StringBetween
+            | crate::node_types::NodeType::Concat
+            | crate::node_types::NodeType::Split
+            | crate::node_types::NodeType::Length
+            | crate::node_types::NodeType::Contains
+            | crate::node_types::NodeType::Replace
+            | crate::node_types::NodeType::Format
+            | crate::node_types::NodeType::ToString
+            | crate::node_types::NodeType::ToInteger
+            | crate::node_types::NodeType::ToFloat => "String",
+
+            crate::node_types::NodeType::Delay => "Time",
+
+            crate::node_types::NodeType::Click
+            | crate::node_types::NodeType::DoubleClick
+            | crate::node_types::NodeType::RightClick
+            | crate::node_types::NodeType::MouseMove
+            | crate::node_types::NodeType::MouseDown
+            | crate::node_types::NodeType::MouseUp
+            | crate::node_types::NodeType::Scroll
+            | crate::node_types::NodeType::KeyPress
+            | crate::node_types::NodeType::KeyDown
+            | crate::node_types::NodeType::KeyUp
+            | crate::node_types::NodeType::TypeText
+            | crate::node_types::NodeType::HotKey
+            | crate::node_types::NodeType::ReadInput => "Input",
+
+            crate::node_types::NodeType::RunCommand
+            | crate::node_types::NodeType::LaunchApp
+            | crate::node_types::NodeType::CloseApp
+            | crate::node_types::NodeType::FocusWindow
+            | crate::node_types::NodeType::GetWindowPosition
+            | crate::node_types::NodeType::SetWindowPosition
+            | crate::node_types::NodeType::FileRead
+            | crate::node_types::NodeType::FileWrite => "System",
+
+            crate::node_types::NodeType::ArrayCreate
+            | crate::node_types::NodeType::ArrayPush
+            | crate::node_types::NodeType::ArrayPop
+            | crate::node_types::NodeType::ArrayGet
+            | crate::node_types::NodeType::ArraySet
+            | crate::node_types::NodeType::ArrayLength
+            | crate::node_types::NodeType::JSONParse
+            | crate::node_types::NodeType::JSONStringify
+            | crate::node_types::NodeType::HTTPRequest => "Data",
+
+            crate::node_types::NodeType::ScreenCapture
+            | crate::node_types::NodeType::SaveScreenshot
+            | crate::node_types::NodeType::GetPixelColor
+            | crate::node_types::NodeType::FindColor
+            | crate::node_types::NodeType::WaitForColor
+            | crate::node_types::NodeType::FindImage
+            | crate::node_types::NodeType::WaitForImage
+            | crate::node_types::NodeType::ImageSimilarity => "Image",
+
             _ => "Default",
         };
 
@@ -1419,7 +3365,6 @@ impl GraphEditor {
         let header_response = ui.allocate_rect(header_rect, Sense::click());
         if header_response.double_clicked() {
             self.editing_node_name = Some(node.id);
-            // Initialize display_name if not set
             if node.display_name.is_none() {
                 node.display_name = Some(String::new());
             }
@@ -1489,13 +3434,27 @@ impl GraphEditor {
 
         for input in &mut node.inputs {
             let port_pos = screen_pos + Vec2::new(0.0, y_offset);
+            let port_color = self.get_type_color(&input.data_type);
+            
+            // Increased port circle from 5 to 7 for better visibility
             ui.painter().circle_filled(
                 port_pos,
-                5.0 * self.zoom,
-                self.get_type_color(&input.data_type),
+                7.0 * self.zoom,
+                port_color,
             );
+            
+            // Add hover highlight effect with glowing stroke
+            let is_hovered = self.hovered_port.as_ref()
+                .map_or(false, |(id, name, is_input)| *id == node.id && name == &input.name && *is_input);
+            if is_hovered {
+                ui.painter().circle_stroke(
+                    port_pos,
+                    10.0 * self.zoom,
+                    Stroke::new(2.0 * self.zoom, Color32::WHITE),
+                );
+            }
 
-            let name_pos = port_pos + Vec2::new(12.0 * self.zoom, 0.0);
+            let name_pos = port_pos + Vec2::new(14.0 * self.zoom, 0.0);
             ui.painter().text(
                 name_pos,
                 egui::Align2::LEFT_CENTER,
@@ -1520,14 +3479,71 @@ impl GraphEditor {
                         let mut c = false;
                         match &mut input.default_value {
                             VariableValue::String(s) => {
-                                if ui
-                                    .add(
-                                        egui::TextEdit::singleline(s)
-                                            .desired_width(70.0 * self.zoom),
-                                    )
-                                    .lost_focus()
-                                {
-                                    c = true;
+                                let is_key = input.name == "Key" && matches!(node.node_type, 
+                                    crate::node_types::NodeType::KeyPress | crate::node_types::NodeType::KeyDown | 
+                                    crate::node_types::NodeType::KeyUp | crate::node_types::NodeType::HotKey);
+                                let is_btn = input.name == "Button" && matches!(node.node_type,
+                                    crate::node_types::NodeType::MouseDown | crate::node_types::NodeType::MouseUp);
+                                
+                                if is_key || is_btn {
+                                    let popup_id = ui.make_persistent_id(format!("popup_{}_{}", node.id, input.name));
+
+                                    ui.horizontal(|ui| {
+                                        let text_color = if (is_key && (s.len() == 1 || VALID_KEYS.contains(&s.to_lowercase().as_str()))) 
+                                            || (is_btn && VALID_BUTTONS.contains(&s.to_lowercase().as_str())) {
+                                            Color32::WHITE
+                                        } else {
+                                            Color32::RED
+                                        };
+                                        
+                                        let response = ui.add(egui::TextEdit::singleline(s)
+                                            .desired_width(80.0 * self.zoom)
+                                            .text_color(text_color));
+                                        
+                                        if response.lost_focus() {
+                                            c = true;
+                                        }
+                                        if response.changed() {
+                                            ui.memory_mut(|m| m.open_popup(popup_id));
+                                            c = true;
+                                        }
+                                        
+                                        if ui.add(egui::Button::new("▼").small()).clicked() {
+                                            ui.memory_mut(|m| m.toggle_popup(popup_id));
+                                        }
+                                        
+                                        egui::popup_below_widget(ui, popup_id, &response, egui::PopupCloseBehavior::CloseOnClickOutside, |ui: &mut egui::Ui| {
+                                            egui::Resize::default()
+                                                .id_salt(popup_id)
+                                                .min_size(Vec2::new(150.0, 100.0))
+                                                .max_size(Vec2::new(400.0, ui.ctx().viewport_rect().height() - 50.0))
+                                                .with_stroke(true)
+                                                .show(ui, |ui| {
+                                                    egui::ScrollArea::vertical().show(ui, |ui| {
+                                                        let options = if is_key { VALID_KEYS } else { VALID_BUTTONS };
+                                                        let search = s.to_lowercase();
+                                                        for &opt in options {
+                                                            if !search.is_empty() && !opt.contains(&search) {
+                                                                continue;
+                                                            }
+                                                            if ui.add(egui::Button::new(opt).frame(false)).clicked() {
+                                                                *s = opt.to_string();
+                                                                c = true;
+                                                                ui.close();
+                                                            }
+                                                        }
+                                                        
+                                                        if options.iter().all(|o| !search.is_empty() && !o.contains(&search)) {
+                                                            ui.label("No matches");
+                                                        }
+                                                    });
+                                                });
+                                        });
+                                    });
+                                } else {
+                                    if ui.add(egui::TextEdit::singleline(s).desired_width(70.0 * self.zoom)).lost_focus() {
+                                        c = true;
+                                    }
                                 }
                             }
                             VariableValue::Float(f) => {
@@ -1570,13 +3586,28 @@ impl GraphEditor {
 
         for output in &node.outputs {
             let port_pos = screen_pos + Vec2::new(node_rect.width(), y_offset);
+            let port_color = self.get_type_color(&output.data_type);
+
+            // Increased port circle from 5 to 7 for better visibility
             ui.painter().circle_filled(
                 port_pos,
-                5.0 * self.zoom,
-                self.get_type_color(&output.data_type),
+                7.0 * self.zoom,
+                port_color,
             );
+
+            // Add hover highlight effect with glowing stroke
+            let is_hovered = self.hovered_port.as_ref()
+                .map_or(false, |(id, name, is_input)| *id == node.id && name == &output.name && !*is_input);
+            if is_hovered {
+                ui.painter().circle_stroke(
+                    port_pos,
+                    10.0 * self.zoom,
+                    Stroke::new(2.0 * self.zoom, Color32::WHITE),
+                );
+            }
+
             ui.painter().text(
-                port_pos - Vec2::new(12.0 * self.zoom, 0.0),
+                port_pos - Vec2::new(14.0 * self.zoom, 0.0),
                 egui::Align2::RIGHT_CENTER,
                 &output.name,
                 egui::FontId::proportional(12.0 * self.zoom),
@@ -1674,6 +3705,13 @@ impl GraphEditor {
                 ui.separator();
             }
 
+            if ui.button("Rename").clicked() {
+                self.editing_node_name = Some(node.id);
+                if node.display_name.is_none() {
+                    node.display_name = Some(String::new());
+                }
+                ui.close();
+            }
             if ui.button("Copy").clicked() {
                 copy_node = true;
                 ui.close();
@@ -1947,6 +3985,7 @@ impl GraphEditor {
             DataType::Integer => Color32::LIGHT_BLUE,
             DataType::String => Color32::KHAKI,
             DataType::Vector3 => Color32::YELLOW,
+            DataType::Array => Color32::from_rgb(255, 165, 0), // Orange for arrays
             DataType::Custom(_) => Color32::GRAY,
         }
     }
@@ -2020,4 +4059,185 @@ impl GraphEditor {
             drawing = !drawing;
         }
     }
+
+    fn draw_groups(
+        &mut self,
+        ui: &mut egui::Ui,
+        graph: &mut BlueprintGraph,
+        canvas_offset: Pos2,
+        _input_primary_pressed: bool,
+    ) {
+        let mut group_move_delta = Vec2::ZERO;
+        let mut group_to_move: Option<Uuid> = None;
+        let mut delete_group_id: Option<Uuid> = None;
+        
+        // Z-order: larger groups drawn first (behind smaller ones)
+        let mut sorted_groups: Vec<Uuid> = graph.groups.keys().cloned().collect();
+        sorted_groups.sort_by(|a, b| {
+             let ga = &graph.groups[a];
+             let gb = &graph.groups[b];
+             let area_b = gb.size.0 * gb.size.1;
+             let area_a = ga.size.0 * ga.size.1;
+             area_b.partial_cmp(&area_a).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        for group_id in sorted_groups {
+            let group = match graph.groups.get_mut(&group_id) {
+                Some(g) => g,
+                None => continue,
+            };
+
+            let pos = Pos2::new(group.position.0, group.position.1);
+            let size = Vec2::new(group.size.0, group.size.1);
+            let screen_pos = self.to_screen(pos, canvas_offset);
+            
+            let rect = Rect::from_min_size(screen_pos, size * self.zoom);
+            let header_height = 24.0 * self.zoom;
+            let header_rect = Rect::from_min_size(rect.min, Vec2::new(rect.width(), header_height));
+
+            // Header interaction (drag to move group)
+            let header_response = ui.interact(
+                header_rect, 
+                ui.id().with(group.id).with("header"), 
+                Sense::click_and_drag()
+            );
+
+            // Double-click on header to rename
+            if header_response.double_clicked() {
+                self.editing_group_name = Some(group.id);
+            }
+
+            // Context Menu - Ungroup only
+            header_response.context_menu(|ui| {
+                if ui.button("Ungroup").clicked() {
+                    delete_group_id = Some(group.id);
+                    ui.close();
+                }
+            });
+
+            if header_response.dragged() {
+                group_move_delta = header_response.drag_delta() / self.zoom;
+                group_to_move = Some(group.id);
+            }
+            
+            // Resize handle
+            let resize_size = Vec2::splat(12.0 * self.zoom);
+            let resize_rect = Rect::from_min_size(rect.max - resize_size, resize_size);
+            let resize_response = ui.interact(
+                resize_rect,
+                ui.id().with(group.id).with("resize"),
+                Sense::drag()
+            );
+            
+            if resize_response.dragged() {
+                let delta = resize_response.drag_delta() / self.zoom;
+                group.size.0 = (group.size.0 + delta.x).max(100.0);
+                group.size.1 = (group.size.1 + delta.y).max(100.0);
+            }
+
+            // --- Rendering ---
+            // Background
+            let bg_color = Color32::from_rgba_unmultiplied(
+                group.color[0], group.color[1], group.color[2], 
+                (group.color[3] as f32 * 0.25) as u8
+            );
+            ui.painter().rect_filled(rect, 8.0, bg_color);
+            
+            // Border
+            ui.painter().rect_stroke(
+                rect, 8.0, 
+                Stroke::new(2.0, Color32::from_rgba_unmultiplied(
+                    group.color[0], group.color[1], group.color[2], group.color[3]
+                )),
+                egui::StrokeKind::Middle
+            );
+            
+            // Header
+            ui.painter().rect_filled(
+                header_rect, 
+                CornerRadius { nw: 8, ne: 8, sw: 0, se: 0 }, 
+                Color32::from_rgba_unmultiplied(
+                    group.color[0], group.color[1], group.color[2], group.color[3]
+                )
+            );
+            
+            // Title text or TextEdit (if editing)
+            if self.editing_group_name == Some(group.id) {
+                // Show TextEdit for rename
+                let title_rect = Rect::from_min_size(
+                    header_rect.min + Vec2::new(8.0 * self.zoom, 2.0 * self.zoom), 
+                    Vec2::new(header_rect.width() - 16.0 * self.zoom, header_height - 4.0 * self.zoom)
+                );
+                let mut title_ui = ui.new_child(egui::UiBuilder::new().max_rect(title_rect));
+                let font_id = egui::FontId::proportional(14.0 * self.zoom);
+                title_ui.style_mut().text_styles.insert(egui::TextStyle::Body, font_id);
+                
+                let response = title_ui.add(
+                    egui::TextEdit::singleline(&mut group.name)
+                        .frame(false)
+                        .text_color(Color32::WHITE)
+                        .desired_width(title_rect.width())
+                );
+                
+                // Stop editing on Enter or lose focus
+                if response.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    self.editing_group_name = None;
+                }
+                
+                // Request focus on first frame
+                if !response.has_focus() {
+                    response.request_focus();
+                }
+            } else {
+                // Static title text
+                ui.painter().text(
+                    header_rect.left_center() + Vec2::new(10.0 * self.zoom, 0.0),
+                    egui::Align2::LEFT_CENTER,
+                    &group.name,
+                    egui::FontId::proportional(14.0 * self.zoom),
+                    Color32::WHITE
+                );
+            }
+            
+            // Resize indicator
+            let resize_color = Color32::from_white_alpha(120);
+            ui.painter().line_segment(
+                [rect.max - Vec2::new(10.0, 2.0) * self.zoom, rect.max - Vec2::new(2.0, 2.0) * self.zoom], 
+                Stroke::new(2.0, resize_color)
+            );
+            ui.painter().line_segment(
+                [rect.max - Vec2::new(2.0, 10.0) * self.zoom, rect.max - Vec2::new(2.0, 2.0) * self.zoom], 
+                Stroke::new(2.0, resize_color)
+            );
+        }
+        
+
+        // Apply group deletion
+        if let Some(id) = delete_group_id {
+            graph.groups.remove(&id);
+        }
+        
+        // Apply group movement (both group position AND contained nodes)
+        if let Some(group_id) = group_to_move {
+            if group_move_delta != Vec2::ZERO {
+                // First update the group position
+                if let Some(group) = graph.groups.get_mut(&group_id) {
+                    group.position.0 += group_move_delta.x;
+                    group.position.1 += group_move_delta.y;
+                }
+                
+                // Then move all contained nodes
+                if let Some(group) = graph.groups.get(&group_id) {
+                    let node_ids = group.contained_nodes.clone();
+                    for node_id in node_ids {
+                        if let Some(node) = graph.nodes.get_mut(&node_id) {
+                            node.position.0 += group_move_delta.x;
+                            node.position.1 += group_move_delta.y;
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
+

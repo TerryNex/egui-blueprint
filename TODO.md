@@ -2,329 +2,245 @@
 
 > **Last Updated:** 2026-01-07  
 > **Status Legend:** `[ ]` Not Started | `[/]` In Progress | `[x]` Completed | `[!]` Blocked/Cannot Fix
+> **Agent Assignment:** `🤖 Agent: [NAME]` - Claimed by AI agent
 
 ---
 
-## High Priority - Bugs
+## 🔧 Task Modules for Multi-Agent Development
 
-### Bug #5: Input Focus Conflict - Node Deletion on Typing
-
-- **Status:** `[x]` ✅ COMPLETED
-- **Issue:** When typing in an input field (e.g., variable value), pressing delete/backspace also deletes the selected `NodeType` instead of just removing characters from the input.
-- **Solution:** Added focus check before processing delete key.
-
-### Bug #8: SetVariable Port Spacing Breaks Connection Lines
-
-- **Status:** `[x]` ✅ COMPLETED
-- **Issue:** After adding spacing to `SetVariable` node ports, the connection lines are drawn at old positions instead of the actual port locations.
-- **Solution:** Added 20px offset in `get_port_screen_pos()` for GetVariable/SetVariable nodes.
-
-### Bug #10: Command+C Copy Not Working & Multi-Select Right-Click Issue
-
-- **Status:** `[x]` ✅ COMPLETED
-- **Issue:** When multiple nodes are selected, right-clicking to copy changes selection to only the right-clicked node. Command+C also not working.
-- **Solution:** Added Copy event check and ctrl modifier, preserved multi-selection on right-click.
-
-### Bug #13: Duplicate NodeType "Divide"
-
-- **Status:** `[x]` ✅ COMPLETED
-- **Issue:** There are two `Divide` node types appearing in the node menu.
-- **Solution:** Removed duplicate entries from node options list.
-
-### Bug #19: Canvas Pan Causes Line/Node Position Drift
-
-- **Status:** `[x]` ✅ COMPLETED
-- **Issue:** When dragging canvas upward or leftward, connection lines and NodeTypes have positional drift.
-- **Solution:** Added VIRTUAL_OFFSET (5000, 5000) to keep all coordinates positive during rendering.
-
-### Bug #25: Node Drag Performance Issue (NEW)
-
-- **Status:** `[ ]`
-- **Issue:** After fixing drag selection, dragging two overlapping nodes causes lag/stutter.
-- **Root Cause:** Current implementation checks `dragging_node.is_none()` for each node, causing performance issues.
-- **Proposed Solution:** Instead of updating z-order during drag, update it only on mouse release (bring-to-front on drop).
-
-### Bug #26: Collision-Based Node Pushing (Alternative Approach)
-
-- **Status:** `[ ]`
-- **Issue:** Alternative to z-order layering - prevent node overlap by pushing nodes away.
-
-### Bug #27: NodeType Block Click Offset Near Left/Top Edges
-
-- **Status:** `[ ]`
-- **Issue:** When nodes are positioned near or beyond the left/top edge of the canvas (after panning), the NodeType block's clickable area is offset from its visual position. Connection lines do NOT have this offset - only the node blocks are affected.
-- **Root Cause:** Likely a mismatch between rendering coordinates and hit-testing coordinates in `draw_node()`. The VIRTUAL_OFFSET or clip_rect may not be consistently applied for node interaction vs. rendering.
-- **Observation:** The offset only occurs when objects approach or exceed the left or top side of the viewport. Right and bottom directions work correctly.
-- **Proposed Solution:** Review the coordinate transformation in `draw_node()` to ensure `to_screen()` and hit-testing use the same reference frame. May need to separate visual offset from interaction offset.
-- **Complexity:** Medium-High
-- **Implementation:** Detect collision during drag and push blocking nodes out of the way.
-- **Complexity:** Medium-High
+> Each module is **independent** and can be developed in parallel.  
+> Agents should **only modify files relevant to their module**.  
+> Use `🤖 Agent: [NAME]` to claim a module.
 
 ---
 
-## High Priority - Features
+## Module A: Desktop Input Automation
 
-### Feature #1: Selection Box / Node Group (UE5-style BP Group)
+**🤖 Agent:** `🤖 Agent: Antigravity-A`  
+**Files:** `node_types.rs`, `executor.rs`, `editor.rs` (node finder only)  
+**Dependencies:** None
 
-- **Status:** `[ ]`
-- **Issue:** Need to implement a selection box/group feature similar to UE5 Blueprint groups.
-- **Complexity:** High
+### Tasks
 
-### Feature #2: Secondary Canvas Center for Reset
+- [x] `Click` node - Click at screen coordinates (x, y)
+- [x] `DoubleClick` node - Double-click at coordinates
+- [x] `RightClick` node - Right-click at coordinates
+- [x] `MouseMove` node - Move cursor to coordinates
+- [x] `MouseDown/MouseUp` nodes - Explicit press/release
+- [x] `Scroll` node - Mouse wheel simulation
+- [x] `KeyPress` node - Press and release a key
+- [x] `KeyDown/KeyUp` nodes - Explicit key press/release
+- [x] `TypeText` node - Type a string of text
+- [x] `HotKey` node - Key combinations (Ctrl+C, etc.)
 
-- **Status:** `[x]` ✅ COMPLETED
-- **Issue:** Canvas reset position should center on all existing NodeTypes rather than origin (0,0).
-- **Solution:** "Center" button now calculates bounding box of all nodes and pans to their center.
-- **Complexity:** Low-Medium
+### Implementation Notes
 
-### Feature #3: Font Size Settings
-
-- **Status:** `[ ]`
-- **Issue:** Add ability to adjust font size in the editor.
-- **Complexity:** Low
-
-### Feature #4: Auto-Load Last Used Script on Startup
-
-- **Status:** `[x]` ✅ COMPLETED
-- **Issue:** Program should automatically load the last used script on startup.
-- **Solution:** Added `last_script_name` to AppSettings, loads on startup if found.
-- **Complexity:** Low
-
-### Feature #6: Node Z-Order by Last Click
-
-- **Status:** `[x]` ✅ COMPLETED
-- **Issue:** Nodes should be ordered by last-clicked (recently clicked on top) rather than creation order.
-- **Solution:** Added `z_order` field to Node, sorted rendering by z_order, updated on click/drag.
-
-### Feature #7: Editable Node Title Names
-
-- **Status:** `[x]` ✅ COMPLETED (Display name support added)
-- **Issue:** Node titles should be editable. Also display custom names in Nodes List panel.
-- **Solution:** Added `display_name: Option<String>` field, UI shows custom name if set.
+- Use `enigo` crate for cross-platform input simulation
+- Add to `Cargo.toml`: `enigo = "0.2"` ✅ Done
 
 ---
 
-## Medium Priority - Features
+## Module B: Touch Automation (Mobile)
 
-### Feature #9: SetVariable String Input Support
+**🤖 Agent:** `[ UNCLAIMED ]`  
+**Files:** `node_types.rs`, `executor.rs`, `editor.rs` (node finder only)  
+**Dependencies:** Module A (for base patterns)
 
-- **Status:** `[x]` ✅ COMPLETED
-- **Issue:** SetVariable should support string type input.
-- **Note:** Already implemented via Variable Type context menu.
+### Tasks
 
-### Feature #11/23: Mouse Scroll Wheel Zoom
+- [ ] `Tap` node - Single tap at coordinates
+- [ ] `DoubleTap` node - Double tap
+- [ ] `LongPress` node - Press and hold
+- [ ] `Swipe` node - Swipe from point A to B
+- [ ] `Pinch` node - Pinch zoom gesture
+- [ ] `MultiTouch` node - Multiple simultaneous touches
 
-- **Status:** `[x]` ✅ COMPLETED
-- **Issue:** Mouse scroll wheel should support zoom in/out.
-- **Solution:** Added raw_scroll_delta handling for zoom with cursor-centered zoom.
+### Implementation Notes
 
-### Feature #12: Highlight Selected Node in Nodes List
-
-- **Status:** `[x]` ✅ COMPLETED
-- **Issue:** Clicking a node in the Nodes List should select and highlight the corresponding NodeType.
-- **Solution:** Added selection on click, visual highlight, and pan to node.
-
-### Feature #14: Divide by Zero Protection
-
-- **Status:** `[x]` ✅ COMPLETED
-- **Issue:** Divide node should not allow division by 0.
-- **Solution:** If divisor is 0, use 1 instead.
-
-### Feature #15: Colored Log Output with Variable Highlighting
-
-- **Status:** `[x]` ✅ COMPLETED (Already exists)
-- **Note:** Log output already parses `{variable}` patterns with colored segments.
-
-### Feature #16: Type Selection for Arithmetic Nodes
-
-- **Status:** `[x]` ✅ COMPLETED
-- **Note:** Context menu allows switching between Float/Integer types.
+- Platform-specific: Android (ADB), iOS (separate implementation)
+- May need different execution path for mobile vs desktop
 
 ---
 
-## Medium Priority - Logic Features
+## Module C: Screenshot & Image Tools
 
-### Feature #17: Branch Node Clarification & Comparison Nodes
+**🤖 Agent:** `🤖 Agent: Antigravity-C`  
+**Files:** `node_types.rs`, `executor.rs`, `main.rs` (UI for region select)  
+**Dependencies:** None
 
-- **Status:** `[x]` ✅ COMPLETED
-- **Issue:** Need comparison nodes: `>`, `<`, `==`, `>=`, `<=`, `!=`
-- **Solution:** Added all comparison nodes with execution logic. Branch condition uses to_bool() (>0 for numbers, "true" for strings).
+### Tasks
 
-### Feature #18: Loop Nodes (For, While, Count)
+- [x] `ScreenCapture` node - Capture full screen
+- [ ] `RegionSelect` UI - Visual box selection overlay
+- [x] `SaveScreenshot` - Auto-save to project folder
+- [ ] `ImageLibrary` UI - Browse saved images
 
-- **Status:** `[x]` ✅ COMPLETED
-- **Issue:** Need loop control flow nodes for automation scripts.
-- **Solution:** ForLoop and WhileLoop port definitions added with full execution logic.
-- **Complexity:** Medium
+### Implementation Notes
 
-### Feature #22: Delay Node
-
-- **Status:** `[x]` ✅ COMPLETED
-- **Issue:** Need a delay/wait node for timed automation.
-- **Solution:** Delay node uses thread::sleep with configurable duration in milliseconds.
-- **Complexity:** Low
+- Use `screenshots` crate for screen capture
+- Add to `Cargo.toml`: `screenshots = "0.8"` or `xcap = "0.0.8"`
 
 ---
 
-## UI/UX Improvements
+## Module D: Image Recognition
 
-### Feature #20: Disable Command+/-/0 Window Zoom, Map to Canvas Zoom
+**🤖 Agent:** `🤖 Agent: Antigravity-D`  
+**Files:** `node_types.rs`, `executor.rs`, new file `image_match.rs`  
+**Dependencies:** Module C (for screenshots)
 
-- **Status:** `[x]` ✅ COMPLETED
-- **Issue:** Command+ `+`/`-`/`0` should control canvas zoom, not window zoom.
-- **Solution:** Keyboard shortcuts already mapped to canvas zoom in editor.rs.
+### Tasks
 
-### Feature #21: Convert Nodes Panel to Collapsible Window
+- [x] `FindImage` node - Template matching on screen
+- [x] `WaitForImage` node - Wait until image appears
+- [x] `GetPixelColor` node - Get color at coordinates
+- [x] `FindColor` node - Search for color in region
+- [x] `WaitForColor` node - Wait for color to appear
+- [x] `ImageSimilarity` - Fuzzy matching with threshold
 
-- **Status:** `[x]` ✅ COMPLETED
-- **Issue:** Nodes panel should be an `egui::Window` so it can be collapsed/minimized.
-- **Solution:** Converted SidePanel to egui::Window with .collapsible(true).
+### Implementation Notes
+
+- Use `image` crate for pixel operations
+- Template matching: compare RGB values with tolerance
+- Optimize: sample grid instead of every pixel
 
 ---
 
-## Automation Foundation
+## Module E: Recording System
 
-### Feature #24: Analysis of Missing Automation Script Nodes
+**🤖 Agent:** `[ UNCLAIMED ]`  
+**Files:** `main.rs`, `editor.rs`, new file `recorder.rs`  
+**Dependencies:** Module A (needs Click nodes to exist)
 
-- **Status:** `[/]` IN PROGRESS
+### Tasks
 
-#### Control Flow
+- [ ] Recording UI - Start/Stop buttons in toolbar
+- [ ] Single Action Recording - Capture one click as node
+- [ ] Continuous Recording - Record until stop
+- [ ] Auto-Add Nodes - Create nodes from recorded actions
+- [ ] Smart Placement - Avoid overlapping existing nodes
+- [ ] Record to Group - Wrap in Node Group
 
-- [x] Entry - Start point
-- [x] Branch - Conditional
-- [x] ForLoop - Port definitions done
-- [x] WhileLoop - Port definitions done
-- [ ] Sequence - Execute multiple flows in order
-- [ ] Gate - On/Off flow control
+### Implementation Notes
 
-#### Variables
+- Use system-level input hooks to capture events
+- Convert captured events to corresponding node types
 
-- [x] GetVariable
-- [x] SetVariable
+---
 
-#### Math
+## Module F: Node Groups / Functions
 
-- [x] Add, Subtract, Multiply, Divide
-- [ ] Modulo (%)
-- [ ] Power (^)
-- [ ] Abs, Min, Max, Clamp
-- [ ] Random
+**🤖 Agent:** `[ UNCLAIMED ]`  
+**Files:** `graph.rs`, `editor.rs`, `node_types.rs`  
+**Dependencies:** None (but Recording may use this)
 
-#### Comparison
+### Tasks
 
-- [x] Equals
-- [x] NotEquals ✅ NEW
-- [x] GreaterThan
-- [x] GreaterThanOrEqual ✅ NEW
-- [x] LessThan
-- [x] LessThanOrEqual ✅ NEW
+- [ ] Group visual box - Resizable rectangle around nodes
+- [ ] Group drag - Move all contained nodes together
+- [ ] Group collapse - Collapse to single node
+- [ ] Function ports - Input/output parameters
+- [ ] Function call node - Invoke a group as function
 
-#### Logic
+### Implementation Notes
 
-- [x] And ✅ NEW
-- [x] Or ✅ NEW
-- [x] Not ✅ NEW
-- [ ] Xor
+- `NodeGroup` struct already exists in `graph.rs`
+- Draw groups BEHIND nodes in render order
 
-#### String Operations (Missing)
+---
 
-- [ ] Concat
-- [ ] Split
-- [ ] Length
-- [ ] Contains
-- [ ] Replace
-- [ ] Format (with placeholders)
+## Module G: System Control
 
-#### Type Conversion
+**🤖 Agent:** `🤖 Antigravity`  
+**Files:** `node_types.rs`, `executor.rs`  
+**Dependencies:** None
 
-- [x] ToInteger
-- [x] ToFloat
-- [x] ToString
+### Tasks
 
-#### I/O
+- [x] `RunCommand` node - Execute shell command
+- [x] `LaunchApp` node - Launch application
+- [x] `CloseApp` node - Close application window
+- [x] `FocusWindow` node - Bring window to foreground
+- [x] `GetWindowPosition` node - Get window coordinates
+- [x] `SetWindowPosition` node - Move/resize window
 
-- [x] Print (BlueprintFunction)
-- [ ] ReadInput
-- [ ] FileRead
-- [ ] FileWrite
+### Implementation Notes
 
-#### Timing
+- Use `std::process::Command` for shell commands
+- Window manipulation: platform-specific APIs
 
-- [x] Delay ✅ (Port definitions done)
+### Pending API Implementation (Module G)
+
+- [x] `FocusWindow` - Implemented with AppleScript on macOS, wmctrl on Linux
+- [x] `GetWindowPosition` - Implemented with AppleScript on macOS, xdotool on Linux
+- [x] `SetWindowPosition` - Implemented with AppleScript on macOS, wmctrl on Linux
+
+---
+
+## Module H: Data Operations
+
+**🤖 Agent:** `🤖 Agent: Claude-H` ✅ COMPLETED  
+**Files:** `node_types.rs`, `executor.rs`, `graph.rs` (for new data types)  
+**Dependencies:** None
+
+### Tasks
+
+- [x] Array type support - Push, Pop, Get, Set, Length
+- [x] `JSONParse` node - Parse JSON string
+- [x] `JSONStringify` node - Convert to JSON string
+- [x] `HTTPRequest` node - GET/POST requests
+- [x] `ArrayCreate` node - Create empty array
+- [x] `ArrayGet` node - Get element by index
+- [x] `ArrayLength` node - Get array length
+
+### Implementation Notes
+
+- Extended `VariableValue` enum with `Array(Vec<VariableValue>)` variant
+- Extended `DataType` enum with `Array` variant
+- Used `serde_json` for JSON operations (already available in project)
+- Used `curl` command for HTTP requests (portable, no additional dependencies)
+
+---
+
+## Completed Bugs (Reference)
+
+### Bug #5, #8, #10, #13, #19, #27 - All COMPLETED ✅
+
+See individual entries in CHANGELOG.md for details.
+
+### Bug #25: Node Drag Performance - `[ ]` Pending
+
+### Bug #26: Collision-Based Node Pushing - `[ ]` Pending
+
+### Bug #28: Node Context Menu Conflict - `[ ]` Pending
+
+**Problem:** Right-clicking on a node shows the node's context menu (Rename, Copy, etc.) but it flashes and disappears because the background's context menu (Create Group from Selection) is also triggered simultaneously.
+
+**Root Cause:** The background context menu uses `ui.interact(clip_rect, ...)` which covers the entire canvas, including nodes. Even with `interaction_consumed` check, the context menus conflict.
+
+**Potential Solutions:**
+1. Check if pointer is over any node before showing background context menu
+2. Use a different mechanism for the background context menu (e.g., only trigger on truly empty areas)
+3. Add a small delay or priority system for context menus
+
+
+---
+
+## How to Claim a Module
+
+1. Edit this file
+2. Replace `[ UNCLAIMED ]` with your agent name, e.g., `🤖 Agent: Claude-A`
+3. Only work on files listed in your module
+4. Mark tasks with `[x]` when complete
+5. Update CHANGELOG.md with your changes
 
 ---
 
 ## Low Priority / Nice to Have
 
 - [ ] Hot-reloading for scripts
-- [x] Node search/filter in add menu (already exists via text input)
+- [x] Node search/filter in add menu
 - [ ] Minimap for large graphs
 - [ ] Node comments/annotations
 - [ ] Undo/Redo improvements
 - [ ] Export to standalone executable
 - [ ] Node presets/templates
-
----
-
-## Cannot Fix / Deferred
-
-*(No items currently)*
-
----
-
-## Completed Summary (This Session)
-
-1. ✅ Bug #5: Input Focus Conflict
-2. ✅ Bug #10: Multi-Select Right-Click Copy
-3. ✅ Bug #13: Duplicate Divide
-4. ✅ Feature #6: Node Z-Order
-5. ✅ Feature #7: Editable Node Titles
-6. ✅ Feature #11/23: Scroll Wheel Zoom
-7. ✅ Feature #12: Highlight in Nodes List
-8. ✅ Feature #14: Divide by Zero Protection
-9. ✅ Feature #17: Comparison Nodes (6 nodes added)
-10. ✅ Feature #17: Logic Nodes (And, Or, Not)
-11. ✅ Feature #18: Loop Node Types (ports defined)
-12. ✅ Feature #20: Keyboard Zoom Mapping
-13. ✅ Feature #21: Collapsible Nodes Window
-14. ✅ Feature #22: Delay Node (ports defined)
-
----
-
-## Remaining Work
-
-### Bugs
-
-- Bug #25: Node Drag Performance Issue (overlapping nodes lag)
-- Bug #26: Collision-Based Node Pushing (alternative to z-order)
-
-### Features (High Priority)
-
-- Feature #1: Node Groups (UI implementation - data structure exists in `graph.rs`)
-- Feature #2: Canvas Center Reset (center on all NodeTypes)
-- Feature #3: Font Size Settings
-- Feature #4: Auto-Load Last Script
-
-### Features (Medium Priority - Execution Logic)
-
-- Feature #18: Loop Execution Logic (ForLoop/WhileLoop ports defined, need executor)
-- Feature #22: Delay Execution Logic (port defined, need `thread::sleep` impl)
-
-### Features (Low Priority - New Nodes)
-
-- Sequence Node (execute multiple flows in order)
-- Gate Node (on/off flow control)
-- Modulo, Power, Abs, Min, Max, Clamp, Random (Math nodes)
-- Xor (Logic node)
-- String Operations: Concat, Split, Length, Contains, Replace, Format
-- I/O: ReadInput, FileRead, FileWrite
-
----
-
-## Notes
-
-1. **Priority Order:** Focus on bugs first, then high-priority features
-2. **Testing:** Run `cargo check` before each commit
-3. **Documentation:** Update README.md when adding new node types
-4. **Changelog:** Record all changes in CHANGELOG.md
-5. **NodeGroup:** Data structure already exists in `graph.rs`, needs UI implementation in `editor.rs`

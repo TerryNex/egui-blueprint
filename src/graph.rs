@@ -82,5 +82,7 @@ pub enum VariableValue {
     Float(f64),
     String(String),
     Vector3(f32, f32, f32),
+    /// Array of values (for Module H: Data Operations)
+    Array(Vec<VariableValue>),
     None, 
 }

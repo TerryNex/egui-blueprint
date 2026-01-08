@@ -1,9 +1,9 @@
 {
   "style": {
     "header_colors": {
-      "Event": [
-        180,
-        50,
+      "Variable": [
+        150,
+        100,
         50,
         255
       ],
@@ -13,10 +13,10 @@
         100,
         255
       ],
-      "Default": [
-        100,
-        100,
-        100,
+      "Event": [
+        180,
+        50,
+        50,
         255
       ],
       "Function": [
@@ -25,14 +25,15 @@
         200,
         255
       ],
-      "Variable": [
-        150,
-        100,
-        50,
+      "Default": [
+        122,
+        122,
+        122,
         255
       ]
     },
-    "use_gradient_connections": true
+    "use_gradient_connections": true,
+    "font_size": 14.0
   },
   "history_max_records": 1000,
   "last_script_name": "blueprint"

@@ -348,20 +348,27 @@ impl eframe::App for MyApp {
             }
         }
 
-        egui::TopBottomPanel::bottom("bottom_panel")
+        // Output Log Window (resizable and movable)
+        egui::Window::new("Output Log")
+            .open(&mut true) // Always open, no close button needed
             .resizable(true)
-            .min_height(100.0)
+            .collapsible(true)
+            .default_width(600.0)
+            .default_height(200.0)
+            .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(10.0, -10.0))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.heading("Output Log");
                     if ui.button("Clear").clicked() {
                         self.logs.clear();
                     }
                     ui.label(format!("Count: {}", self.logs.len()));
                 });
-                egui::ScrollArea::vertical()
+                ui.separator();
+                egui::ScrollArea::both()
                     .stick_to_bottom(true)
+                    .auto_shrink([false, false])
                     .show(ui, |ui| {
+                        ui.set_min_width(ui.available_width());
                         // Use theme-aware text colors
                         let text_color = ui.visuals().strong_text_color();
                         let highlight_color = if ui.visuals().dark_mode {
@@ -422,6 +429,7 @@ impl eframe::App for MyApp {
                     });
             });
 
+
         // Nodes Window (collapsible)
         egui::Window::new("Nodes")
             .open(&mut self.show_nodes_window)
@@ -438,61 +446,118 @@ impl eframe::App for MyApp {
                         .nodes
                         .values()
                         .map(|node| {
-                            let name = if let Some(ref custom_name) = node.display_name {
-                                if custom_name.is_empty() {
-                                    match &node.node_type {
-                                        NodeType::BlueprintFunction { name } => name.clone(),
-                                        NodeType::GetVariable { name } => format!("Get {}", name),
-                                        NodeType::SetVariable { name } => format!("Set {}", name),
-                                        other => format!("{:?}", other),
-                                    }
+                            // Get node type name (clean format)
+                            let type_name = match &node.node_type {
+                                NodeType::BlueprintFunction { name } => name.clone(),
+                                NodeType::GetVariable { name } => format!("Get: {}", name),
+                                NodeType::SetVariable { name } => format!("Set: {}", name),
+                                NodeType::Add => "Add".into(),
+                                NodeType::Subtract => "Subtract".into(),
+                                NodeType::Multiply => "Multiply".into(),
+                                NodeType::Divide => "Divide".into(),
+                                NodeType::Modulo => "Modulo".into(),
+                                NodeType::Power => "Power".into(),
+                                NodeType::Abs => "Abs".into(),
+                                NodeType::Min => "Min".into(),
+                                NodeType::Max => "Max".into(),
+                                NodeType::Clamp => "Clamp".into(),
+                                NodeType::Random => "Random".into(),
+                                NodeType::ToInteger => "To Integer".into(),
+                                NodeType::ToFloat => "To Float".into(),
+                                NodeType::ToString => "To String".into(),
+                                NodeType::Branch => "Branch".into(),
+                                NodeType::Entry => "Entry".into(),
+                                NodeType::ForLoop => "For Loop".into(),
+                                NodeType::WhileLoop => "While Loop".into(),
+                                NodeType::Delay => "Delay".into(),
+                                NodeType::Sequence => "Sequence".into(),
+                                NodeType::Gate => "Gate".into(),
+                                NodeType::Equals => "Equals".into(),
+                                NodeType::NotEquals => "Not Equals".into(),
+                                NodeType::GreaterThan => "Greater Than".into(),
+                                NodeType::GreaterThanOrEqual => "Greater or Equal".into(),
+                                NodeType::LessThan => "Less Than".into(),
+                                NodeType::LessThanOrEqual => "Less or Equal".into(),
+                                NodeType::And => "And".into(),
+                                NodeType::Or => "Or".into(),
+                                NodeType::Not => "Not".into(),
+                                NodeType::Xor => "Xor".into(),
+                                NodeType::Concat => "Concat".into(),
+                                NodeType::Split => "Split".into(),
+                                NodeType::Length => "Length".into(),
+                                NodeType::Contains => "Contains".into(),
+                                NodeType::Replace => "Replace".into(),
+                                NodeType::Format => "Format".into(),
+                                NodeType::StringJoin => "String Join".into(),
+                                NodeType::StringBetween => "String Between".into(),
+                                NodeType::ReadInput => "Read Input".into(),
+                                NodeType::FileRead => "File Read".into(),
+                                NodeType::FileWrite => "File Write".into(),
+                                // System Control
+                                NodeType::RunCommand => "Run Command".into(),
+                                NodeType::LaunchApp => "Launch App".into(),
+                                NodeType::CloseApp => "Close App".into(),
+                                NodeType::FocusWindow => "Focus Window".into(),
+                                NodeType::GetWindowPosition => "Get Window Pos".into(),
+                                NodeType::SetWindowPosition => "Set Window Pos".into(),
+                                NodeType::ScreenCapture => "Screen Capture".into(),
+                                NodeType::SaveScreenshot => "Save Screenshot".into(),
+                                _ => format!("{:?}", node.node_type),
+                            };
+                            
+                            // Create display name: "Type: CustomName" or just "Type"
+                            let display = if let Some(ref custom_name) = node.display_name {
+                                if !custom_name.is_empty() {
+                                    format!("{}: {}", type_name, custom_name)
                                 } else {
-                                    format!("{:?}: {}", node.node_type, custom_name)
+                                    type_name.clone()
                                 }
                             } else {
-                                match &node.node_type {
-                                    NodeType::BlueprintFunction { name } => name.clone(),
-                                    NodeType::GetVariable { name } => format!("Get {}", name),
-                                    NodeType::SetVariable { name } => format!("Set {}", name),
-                                    NodeType::Add => "Add".into(),
-                                    NodeType::Subtract => "Subtract".into(),
-                                    NodeType::Multiply => "Multiply".into(),
-                                    NodeType::Divide => "Divide".into(),
-                                    NodeType::ToInteger => "To Integer".into(),
-                                    NodeType::ToFloat => "To Float".into(),
-                                    NodeType::ToString => "To String".into(),
-                                    NodeType::Branch => "Branch".into(),
-                                    NodeType::Entry => "Entry".into(),
-                                    NodeType::Equals => "Equals".into(),
-                                    NodeType::GreaterThan => "GreaterThan".into(),
-                                    NodeType::LessThan => "LessThan".into(),
-                                    _ => format!("{:?}", node.node_type),
-                                }
+                                type_name.clone()
                             };
-                            (node.id, name, node.position)
+                            
+                            // Get header color based on node type (matching canvas)
+                            let header_color = match &node.node_type {
+                                NodeType::BlueprintFunction { name } if name.starts_with("Event") => {
+                                    self.editor.style.header_colors.get("Event")
+                                        .copied().unwrap_or(egui::Color32::from_rgb(180, 50, 50))
+                                }
+                                NodeType::BlueprintFunction { .. } => {
+                                    self.editor.style.header_colors.get("Function")
+                                        .copied().unwrap_or(egui::Color32::from_rgb(50, 100, 200))
+                                }
+                                NodeType::Add | NodeType::Subtract | NodeType::Multiply | NodeType::Divide
+                                | NodeType::Modulo | NodeType::Power | NodeType::Abs | NodeType::Min 
+                                | NodeType::Max | NodeType::Clamp | NodeType::Random => {
+                                    self.editor.style.header_colors.get("Math")
+                                        .copied().unwrap_or(egui::Color32::from_rgb(50, 150, 100))
+                                }
+                                NodeType::GetVariable { .. } | NodeType::SetVariable { .. } => {
+                                    self.editor.style.header_colors.get("Variable")
+                                        .copied().unwrap_or(egui::Color32::from_rgb(150, 100, 50))
+                                }
+                                _ => self.editor.style.header_colors.get("Default")
+                                    .copied().unwrap_or(egui::Color32::from_rgb(100, 100, 100)),
+                            };
+                            
+                            (node.id, display, node.position, header_color)
                         })
                         .collect();
 
-                    for (node_id, name, position) in node_info {
-                        // Highlight if node is selected - use theme-aware colors
+                    for (node_id, name, position, header_color) in node_info {
+                        // Highlight if node is selected
                         let is_selected = self.editor.selected_nodes.contains(&node_id);
-                        let selected_color = if ui.visuals().dark_mode {
-                            egui::Color32::from_rgb(80, 80, 140)
+                        let fill_color = if is_selected {
+                            header_color.gamma_multiply(1.3)
                         } else {
-                            egui::Color32::from_rgb(180, 180, 220)
+                            header_color
                         };
-                        let normal_color = if ui.visuals().dark_mode {
-                            egui::Color32::from_gray(48)
-                        } else {
-                            egui::Color32::from_gray(200)
-                        };
-                        let button = egui::Button::new(&name).fill(if is_selected {
-                            selected_color
-                        } else {
-                            normal_color
-                        });
+                        let button = egui::Button::new(
+                            egui::RichText::new(&name).color(egui::Color32::WHITE)
+                        ).fill(fill_color);
 
                         if ui.add(button).clicked() {
+
                             // Select the node and pan to center it
                             self.editor.selected_nodes.clear();
                             self.editor.selected_nodes.insert(node_id);
@@ -507,6 +572,23 @@ impl eframe::App for MyApp {
                                 self.editor.next_z_order += 1;
                             }
                         }
+                    }
+                    
+                    if !self.graph.groups.is_empty() {
+                         ui.separator();
+                         ui.label("Groups:");
+                         for (id, group) in &self.graph.groups {
+                             let name = if group.name.is_empty() { "Unnamed Group" } else { &group.name };
+                             let bg = egui::Color32::from_rgb(group.color[0], group.color[1], group.color[2]);
+                             
+                             if ui.add(egui::Button::new(egui::RichText::new(name).color(egui::Color32::WHITE)).fill(bg)).clicked() {
+                                 // Pan to group
+                                 let center = ui.ctx().available_rect().center().to_vec2();
+                                 let virtual_offset = egui::Vec2::new(5000.0, 5000.0);
+                                 let group_pos = egui::Vec2::new(group.position.0, group.position.1) + virtual_offset; // Approx top-left
+                                 self.editor.pan = center - group_pos * self.editor.zoom;
+                             }
+                         }
                     }
                 });
             });

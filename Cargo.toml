@@ -14,5 +14,12 @@ uuid = { version = "1.19.0", features = ["v4", "serde"] }
 anyhow = "1.0.100"
 egui_extras = { version = "0.33.3", features = ["all_loaders"] }
 chrono = "0.4.42"
+# Desktop Input Automation (Module A)
+enigo = "0.2"
+# Screenshot & Image Tools (Module C)
+xcap = "0.8"
+# Image Recognition (Module D)
+image = "0.25"
+
 
 
