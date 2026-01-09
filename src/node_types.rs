@@ -15,12 +15,18 @@ pub enum DataType {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum NodeType {
-    BlueprintFunction { name: String },
+    BlueprintFunction {
+        name: String,
+    },
     Branch,
     ForLoop,
     WhileLoop,
-    GetVariable { name: String },
-    SetVariable { name: String },
+    GetVariable {
+        name: String,
+    },
+    SetVariable {
+        name: String,
+    },
     // Math operations
     Add,
     Subtract,
@@ -33,6 +39,8 @@ pub enum NodeType {
     Max,
     Clamp,
     Random,
+    /// Constant value output - outputs the input value directly
+    Constant,
     // Comparison operations
     Equals,
     NotEquals,
@@ -64,7 +72,7 @@ pub enum NodeType {
     FileRead,
     FileWrite,
     // Other
-    InputParam, 
+    InputParam,
     OutputParam,
     // Entry point for the graph
     Entry,
@@ -144,7 +152,6 @@ pub enum NodeType {
     /// Compare two images with tolerance
     ImageSimilarity,
 }
-
 
 impl Default for NodeType {
     fn default() -> Self {

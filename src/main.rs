@@ -11,6 +11,7 @@ use graph::{BlueprintGraph, Node, Port};
 use history::UndoStack;
 use node_types::{DataType, NodeType};
 use std::sync::mpsc::Receiver;
+use sysinfo::{Pid, ProcessesToUpdate, System};
 use uuid::Uuid;
 
 fn main() -> eframe::Result<()> {
@@ -39,9 +40,14 @@ struct MyApp {
     script_name: String,
     show_load_window: bool,
     show_nodes_window: bool,
+    show_debug_window: bool,
     start_time: std::time::Instant,
     undo_stack: UndoStack,
     log_receiver: Option<Receiver<String>>,
+    // Debug window state
+    system: System,
+    frame_times: Vec<f32>,
+    last_frame_time: std::time::Instant,
 }
 
 impl Default for MyApp {
@@ -53,9 +59,13 @@ impl Default for MyApp {
             script_name: "blueprint".to_string(),
             show_load_window: false,
             show_nodes_window: true,
+            show_debug_window: false,
             start_time: std::time::Instant::now(),
             undo_stack: UndoStack::default(),
             log_receiver: None,
+            system: System::new_all(),
+            frame_times: Vec::with_capacity(120),
+            last_frame_time: std::time::Instant::now(),
         };
         let _ = std::fs::create_dir_all("scripts");
         // Load settings first (may auto-load last script)
@@ -274,6 +284,10 @@ impl eframe::App for MyApp {
                     self.logs
                         .push("[System] Async Execution Started".to_string());
                 }
+                ui.separator();
+                if ui.button("Debug").clicked() {
+                    self.show_debug_window = !self.show_debug_window;
+                }
             });
         });
 
@@ -284,6 +298,67 @@ impl eframe::App for MyApp {
                 let time_str = now.format("%H:%M:%S").to_string();
                 self.logs.push(format!("[{}] {}", time_str, msg));
             }
+        }
+
+        // Debug/Performance Window
+        if self.show_debug_window {
+            // Update frame time tracking
+            let now = std::time::Instant::now();
+            let frame_time = now.duration_since(self.last_frame_time).as_secs_f32();
+            self.last_frame_time = now;
+            self.frame_times.push(frame_time);
+            if self.frame_times.len() > 120 {
+                self.frame_times.remove(0);
+            }
+
+            // Update system info periodically (every 60 frames)
+            if self.frame_times.len() % 60 == 0 {
+                let pid = Pid::from_u32(std::process::id());
+                self.system
+                    .refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
+            }
+
+            egui::Window::new("Debug / Performance")
+                .open(&mut self.show_debug_window)
+                .resizable(true)
+                .default_width(280.0)
+                .show(ctx, |ui| {
+                    // FPS
+                    let avg_frame_time: f32 = if self.frame_times.is_empty() {
+                        0.0
+                    } else {
+                        self.frame_times.iter().sum::<f32>() / self.frame_times.len() as f32
+                    };
+                    let fps = if avg_frame_time > 0.0 {
+                        1.0 / avg_frame_time
+                    } else {
+                        0.0
+                    };
+                    ui.label(format!("FPS: {:.1}", fps));
+                    ui.label(format!("Frame Time: {:.2} ms", avg_frame_time * 1000.0));
+                    ui.separator();
+
+                    // App Memory & CPU
+                    if let Some(process) = self.system.process(Pid::from_u32(std::process::id())) {
+                        let used_memory = process.memory(); // Bytes
+                        ui.label(format!(
+                            "Memory: {:.1} MB",
+                            used_memory as f64 / 1_048_576.0
+                        ));
+
+                        let cpu_usage = process.cpu_usage();
+                        ui.label(format!("CPU Usage: {:.1}%", cpu_usage));
+                        ui.add(egui::ProgressBar::new(cpu_usage / 100.0));
+                    } else {
+                        ui.label("Could not retrieve process info");
+                    }
+                    ui.separator();
+
+                    // Graph Stats
+                    ui.label(format!("Nodes: {}", self.graph.nodes.len()));
+                    ui.label(format!("Connections: {}", self.graph.connections.len()));
+                    ui.label(format!("Groups: {}", self.graph.groups.len()));
+                });
         }
 
         let mut show_load_window = self.show_load_window;
@@ -429,7 +504,6 @@ impl eframe::App for MyApp {
                     });
             });
 
-
         // Nodes Window (collapsible)
         egui::Window::new("Nodes")
             .open(&mut self.show_nodes_window)
@@ -462,6 +536,7 @@ impl eframe::App for MyApp {
                                 NodeType::Max => "Max".into(),
                                 NodeType::Clamp => "Clamp".into(),
                                 NodeType::Random => "Random".into(),
+                                NodeType::Constant => "Constant".into(),
                                 NodeType::ToInteger => "To Integer".into(),
                                 NodeType::ToFloat => "To Float".into(),
                                 NodeType::ToString => "To String".into(),
@@ -504,7 +579,7 @@ impl eframe::App for MyApp {
                                 NodeType::SaveScreenshot => "Save Screenshot".into(),
                                 _ => format!("{:?}", node.node_type),
                             };
-                            
+
                             // Create display name: "Type: CustomName" or just "Type"
                             let display = if let Some(ref custom_name) = node.display_name {
                                 if !custom_name.is_empty() {
@@ -515,31 +590,60 @@ impl eframe::App for MyApp {
                             } else {
                                 type_name.clone()
                             };
-                            
+
                             // Get header color based on node type (matching canvas)
                             let header_color = match &node.node_type {
-                                NodeType::BlueprintFunction { name } if name.starts_with("Event") => {
-                                    self.editor.style.header_colors.get("Event")
-                                        .copied().unwrap_or(egui::Color32::from_rgb(180, 50, 50))
+                                NodeType::BlueprintFunction { name }
+                                    if name.starts_with("Event") =>
+                                {
+                                    self.editor
+                                        .style
+                                        .header_colors
+                                        .get("Event")
+                                        .copied()
+                                        .unwrap_or(egui::Color32::from_rgb(180, 50, 50))
                                 }
-                                NodeType::BlueprintFunction { .. } => {
-                                    self.editor.style.header_colors.get("Function")
-                                        .copied().unwrap_or(egui::Color32::from_rgb(50, 100, 200))
-                                }
-                                NodeType::Add | NodeType::Subtract | NodeType::Multiply | NodeType::Divide
-                                | NodeType::Modulo | NodeType::Power | NodeType::Abs | NodeType::Min 
-                                | NodeType::Max | NodeType::Clamp | NodeType::Random => {
-                                    self.editor.style.header_colors.get("Math")
-                                        .copied().unwrap_or(egui::Color32::from_rgb(50, 150, 100))
-                                }
-                                NodeType::GetVariable { .. } | NodeType::SetVariable { .. } => {
-                                    self.editor.style.header_colors.get("Variable")
-                                        .copied().unwrap_or(egui::Color32::from_rgb(150, 100, 50))
-                                }
-                                _ => self.editor.style.header_colors.get("Default")
-                                    .copied().unwrap_or(egui::Color32::from_rgb(100, 100, 100)),
+                                NodeType::BlueprintFunction { .. } => self
+                                    .editor
+                                    .style
+                                    .header_colors
+                                    .get("Function")
+                                    .copied()
+                                    .unwrap_or(egui::Color32::from_rgb(50, 100, 200)),
+                                NodeType::Add
+                                | NodeType::Subtract
+                                | NodeType::Multiply
+                                | NodeType::Divide
+                                | NodeType::Modulo
+                                | NodeType::Power
+                                | NodeType::Abs
+                                | NodeType::Min
+                                | NodeType::Max
+                                | NodeType::Clamp
+                                | NodeType::Random
+                                | NodeType::Constant => self
+                                    .editor
+                                    .style
+                                    .header_colors
+                                    .get("Math")
+                                    .copied()
+                                    .unwrap_or(egui::Color32::from_rgb(50, 150, 100)),
+                                NodeType::GetVariable { .. } | NodeType::SetVariable { .. } => self
+                                    .editor
+                                    .style
+                                    .header_colors
+                                    .get("Variable")
+                                    .copied()
+                                    .unwrap_or(egui::Color32::from_rgb(150, 100, 50)),
+                                _ => self
+                                    .editor
+                                    .style
+                                    .header_colors
+                                    .get("Default")
+                                    .copied()
+                                    .unwrap_or(egui::Color32::from_rgb(100, 100, 100)),
                             };
-                            
+
                             (node.id, display, node.position, header_color)
                         })
                         .collect();
@@ -553,11 +657,11 @@ impl eframe::App for MyApp {
                             header_color
                         };
                         let button = egui::Button::new(
-                            egui::RichText::new(&name).color(egui::Color32::WHITE)
-                        ).fill(fill_color);
+                            egui::RichText::new(&name).color(egui::Color32::WHITE),
+                        )
+                        .fill(fill_color);
 
                         if ui.add(button).clicked() {
-
                             // Select the node and pan to center it
                             self.editor.selected_nodes.clear();
                             self.editor.selected_nodes.insert(node_id);
@@ -573,22 +677,39 @@ impl eframe::App for MyApp {
                             }
                         }
                     }
-                    
+
                     if !self.graph.groups.is_empty() {
-                         ui.separator();
-                         ui.label("Groups:");
-                         for (id, group) in &self.graph.groups {
-                             let name = if group.name.is_empty() { "Unnamed Group" } else { &group.name };
-                             let bg = egui::Color32::from_rgb(group.color[0], group.color[1], group.color[2]);
-                             
-                             if ui.add(egui::Button::new(egui::RichText::new(name).color(egui::Color32::WHITE)).fill(bg)).clicked() {
-                                 // Pan to group
-                                 let center = ui.ctx().available_rect().center().to_vec2();
-                                 let virtual_offset = egui::Vec2::new(5000.0, 5000.0);
-                                 let group_pos = egui::Vec2::new(group.position.0, group.position.1) + virtual_offset; // Approx top-left
-                                 self.editor.pan = center - group_pos * self.editor.zoom;
-                             }
-                         }
+                        ui.separator();
+                        ui.label("Groups:");
+                        for (id, group) in &self.graph.groups {
+                            let name = if group.name.is_empty() {
+                                "Unnamed Group"
+                            } else {
+                                &group.name
+                            };
+                            let bg = egui::Color32::from_rgb(
+                                group.color[0],
+                                group.color[1],
+                                group.color[2],
+                            );
+
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        egui::RichText::new(name).color(egui::Color32::WHITE),
+                                    )
+                                    .fill(bg),
+                                )
+                                .clicked()
+                            {
+                                // Pan to group
+                                let center = ui.ctx().available_rect().center().to_vec2();
+                                let virtual_offset = egui::Vec2::new(5000.0, 5000.0);
+                                let group_pos = egui::Vec2::new(group.position.0, group.position.1)
+                                    + virtual_offset; // Approx top-left
+                                self.editor.pan = center - group_pos * self.editor.zoom;
+                            }
+                        }
                     }
                 });
             });

@@ -151,6 +151,10 @@ pub fn evaluate_node(
             };
             Ok(VariableValue::Float(random_val))
         }
+        NodeType::Constant => {
+            // Constant simply passes through the value
+            evaluate_input(graph, node.id, "Value", context)
+        }
 
         // === Variable Access ===
         NodeType::GetVariable { name } => {

@@ -20,6 +20,5 @@ enigo = "0.2"
 xcap = "0.8"
 # Image Recognition (Module D)
 image = "0.25"
-
-
-
+# System Monitoring (Debug Window)
+sysinfo = "0.35"

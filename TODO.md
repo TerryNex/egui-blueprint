@@ -211,7 +211,7 @@ See individual entries in CHANGELOG.md for details.
 
 ### Bug #26: Collision-Based Node Pushing - `[ ]` Pending
 
-### Bug #28: Node Context Menu Conflict - `[ ]` Pending
+### Bug #28: Node Context Menu Conflict - [x] Completed
 
 **Problem:** Right-clicking on a node shows the node's context menu (Rename, Copy, etc.) but it flashes and disappears because the background's context menu (Create Group from Selection) is also triggered simultaneously.
 

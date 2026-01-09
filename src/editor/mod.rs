@@ -7,15 +7,80 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 pub const VALID_KEYS: &[&str] = &[
-    "return", "space", "backspace", "tab", "escape",
-    "up", "down", "left", "right",
-    "shift", "ctrl", "alt", "command", "option", "meta",
-    "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12",
-    "home", "end", "pageup", "pagedown", "insert", "delete",
-    "capslock", "numlock", "scrolllock", "printscreen", "pause",
-    "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
-    "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
-    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
+    "return",
+    "space",
+    "backspace",
+    "tab",
+    "escape",
+    "up",
+    "down",
+    "left",
+    "right",
+    "shift",
+    "ctrl",
+    "alt",
+    "command",
+    "option",
+    "meta",
+    "f1",
+    "f2",
+    "f3",
+    "f4",
+    "f5",
+    "f6",
+    "f7",
+    "f8",
+    "f9",
+    "f10",
+    "f11",
+    "f12",
+    "home",
+    "end",
+    "pageup",
+    "pagedown",
+    "insert",
+    "delete",
+    "capslock",
+    "numlock",
+    "scrolllock",
+    "printscreen",
+    "pause",
+    "a",
+    "b",
+    "c",
+    "d",
+    "e",
+    "f",
+    "g",
+    "h",
+    "i",
+    "j",
+    "k",
+    "l",
+    "m",
+    "n",
+    "o",
+    "p",
+    "q",
+    "r",
+    "s",
+    "t",
+    "u",
+    "v",
+    "w",
+    "x",
+    "y",
+    "z",
+    "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
 ];
 
 pub const VALID_BUTTONS: &[&str] = &["left", "right", "middle"];
@@ -56,7 +121,9 @@ pub struct EditorStyle {
     pub font_size: f32,
 }
 
-fn default_font_size() -> f32 { 14.0 }
+fn default_font_size() -> f32 {
+    14.0
+}
 
 pub struct GraphEditor {
     pub pan: Vec2,
@@ -202,6 +269,111 @@ impl GraphEditor {
         let painter = ui.painter();
         painter.rect_filled(clip_rect, 0.0, Color32::from_gray(32)); // Background
 
+        // Context Menu on Background - Create Group
+        // Moved to top to avoid conflict with node context menus (nodes are drawn on top)
+        if !self.selected_nodes.is_empty() {
+            // Check if any selected node is already in a group
+            let already_grouped: std::collections::HashSet<Uuid> = graph
+                .groups
+                .values()
+                .flat_map(|g| g.contained_nodes.iter().cloned())
+                .collect();
+
+            let selected_in_group: Vec<_> = self
+                .selected_nodes
+                .iter()
+                .filter(|id| already_grouped.contains(id))
+                .cloned()
+                .collect();
+
+            let can_create_group = selected_in_group.is_empty();
+
+            // Find group name if selected node is in a group
+            let group_info: Option<(Uuid, String)> = if !selected_in_group.is_empty() {
+                graph
+                    .groups
+                    .values()
+                    .find(|g| {
+                        g.contained_nodes
+                            .iter()
+                            .any(|id| selected_in_group.contains(id))
+                    })
+                    .map(|g| (g.id, g.name.clone()))
+            } else {
+                None
+            };
+
+            ui.interact(clip_rect, ui.id().with("bg_context"), Sense::click())
+                .context_menu(|ui| {
+                    if can_create_group {
+                        if ui.button("Create Group from Selection").clicked() {
+                            // Calculate bounds of selected nodes
+                            let mut min_x = f32::INFINITY;
+                            let mut min_y = f32::INFINITY;
+                            let mut max_x = f32::NEG_INFINITY;
+                            let mut max_y = f32::NEG_INFINITY;
+
+                            let nodes: Vec<Uuid> = self.selected_nodes.iter().cloned().collect();
+
+                            for id in &nodes {
+                                if let Some(node) = graph.nodes.get(id) {
+                                    min_x = min_x.min(node.position.0);
+                                    min_y = min_y.min(node.position.1);
+                                    let size = node_sizes
+                                        .get(id)
+                                        .cloned()
+                                        .unwrap_or(Vec2::new(150.0, 100.0));
+                                    let node_width = size.x / self.zoom;
+                                    let node_height = size.y / self.zoom;
+
+                                    max_x = max_x.max(node.position.0 + node_width);
+                                    max_y = max_y.max(node.position.1 + node_height);
+                                }
+                            }
+
+                            if min_x != f32::INFINITY {
+                                let padding = 20.0;
+                                let group_id = Uuid::new_v4();
+                                let group = crate::graph::NodeGroup {
+                                    id: group_id,
+                                    name: "New Group".into(),
+                                    position: (min_x - padding, min_y - padding - 30.0),
+                                    size: (
+                                        max_x - min_x + padding * 2.0,
+                                        max_y - min_y + padding * 2.0 + 30.0,
+                                    ),
+                                    color: [100, 100, 100, 255],
+                                    contained_nodes: nodes,
+                                };
+                                graph.groups.insert(group_id, group);
+                                ui.close();
+                            }
+                        }
+                    } else if let Some((group_id, group_name)) = group_info {
+                        // Node is already in a group - show group name and allow navigation
+                        let label = format!(
+                            "📁 In Group: {}",
+                            if group_name.is_empty() {
+                                "Unnamed"
+                            } else {
+                                &group_name
+                            }
+                        );
+                        if ui.button(&label).clicked() {
+                            // Pan to group
+                            if let Some(group) = graph.groups.get(&group_id) {
+                                let center = ui.ctx().available_rect().center().to_vec2();
+                                let virtual_offset = Vec2::new(5000.0, 5000.0);
+                                let group_pos =
+                                    Vec2::new(group.position.0, group.position.1) + virtual_offset;
+                                self.pan = center - group_pos * self.zoom;
+                            }
+                            ui.close();
+                        }
+                    }
+                });
+        }
+
         // Draw groups (behind nodes and connections)
         self.draw_groups(ui, graph, canvas_offset, input_primary_pressed);
 
@@ -244,7 +416,41 @@ impl GraphEditor {
                 Some(n) => n,
                 None => continue,
             };
-            
+
+            // Compute overlapping groups for this node (≥50% overlap)
+            let node_pos = Pos2::new(node.position.0, node.position.1);
+            let node_screen_pos = self.to_screen(node_pos, canvas_offset);
+            let node_size = node_sizes
+                .get(&node_id)
+                .cloned()
+                .unwrap_or(Vec2::new(150.0, 100.0));
+            let node_screen_rect = Rect::from_min_size(node_screen_pos, node_size);
+            let node_area = node_size.x * node_size.y;
+
+            // Find groups this node is NOT already in and overlaps ≥50%
+            let overlapping_groups: Vec<(Uuid, String)> = graph
+                .groups
+                .values()
+                .filter(|g| !g.contained_nodes.contains(&node_id))
+                .filter_map(|g| {
+                    let group_pos = Pos2::new(g.position.0, g.position.1);
+                    let group_screen_pos = self.to_screen(group_pos, canvas_offset);
+                    let group_screen_size = Vec2::new(g.size.0, g.size.1) * self.zoom;
+                    let group_screen_rect =
+                        Rect::from_min_size(group_screen_pos, group_screen_size);
+
+                    let intersection = node_screen_rect.intersect(group_screen_rect);
+                    if intersection.is_positive() {
+                        let intersection_area = intersection.width() * intersection.height();
+                        let overlap_ratio = intersection_area / node_area;
+                        if overlap_ratio >= 0.5 {
+                            return Some((g.id, g.name.clone()));
+                        }
+                    }
+                    None
+                })
+                .collect();
+
             // Use child_ui with clip_rect to prevent layout cursor accumulation between nodes
             // This ensures each node's ui.interact() and ui.scope_builder() don't affect other nodes
             let (
@@ -258,6 +464,7 @@ impl GraphEditor {
                 node_changed,
                 delete,
                 copy,
+                add_to_group,
             ) = {
                 let mut child_ui = ui.new_child(egui::UiBuilder::new().max_rect(clip_rect));
 
@@ -268,9 +475,17 @@ impl GraphEditor {
                     input_primary_released,
                     &graph.connections,
                     &node_sizes,
+                    &overlapping_groups,
                 )
             };
 
+            // Handle add to group request
+            if let Some(group_id) = add_to_group {
+                if let Some(group) = graph.groups.get_mut(&group_id) {
+                    group.contained_nodes.push(node_id);
+                    changed = true;
+                }
+            }
 
             if node_changed {
                 changed = true;
@@ -322,11 +537,10 @@ impl GraphEditor {
                     self.selected_nodes.insert(node.id);
                 }
                 // Else: already selected, keep selection for multi-node drag
-                
+
                 // Bring pressed node to front
                 bring_to_front_id = Some(node.id);
             }
-
 
             if drag_delta != Vec2::ZERO {
                 // Issue 6: Prevent Middle Mouse from moving nodes
@@ -404,6 +618,7 @@ impl GraphEditor {
             && connect_event.is_none()
             && self.connection_start.is_none()
             && !input_modifiers.alt
+            && !ui.ctx().is_using_pointer()
         {
             if let Some(pos) = pointer_pos {
                 if let Some(mut rect) = self.selection_box {
@@ -418,86 +633,6 @@ impl GraphEditor {
                     }
                 }
             }
-        }
-        
-        // Context Menu on Background - Create Group (only if selected nodes are not already grouped)
-        if !interaction_consumed && !self.selected_nodes.is_empty() {
-             // Check if any selected node is already in a group
-             let already_grouped: std::collections::HashSet<Uuid> = graph.groups.values()
-                 .flat_map(|g| g.contained_nodes.iter().cloned())
-                 .collect();
-             
-             let selected_in_group: Vec<_> = self.selected_nodes.iter()
-                 .filter(|id| already_grouped.contains(id))
-                 .cloned()
-                 .collect();
-             
-             let can_create_group = selected_in_group.is_empty();
-             
-             // Find group name if selected node is in a group
-             let group_info: Option<(Uuid, String)> = if !selected_in_group.is_empty() {
-                 graph.groups.values()
-                     .find(|g| g.contained_nodes.iter().any(|id| selected_in_group.contains(id)))
-                     .map(|g| (g.id, g.name.clone()))
-             } else {
-                 None
-             };
-             
-             ui.interact(clip_rect, ui.id().with("bg_context"), Sense::click())
-               .context_menu(|ui| {
-                   if can_create_group {
-                       if ui.button("Create Group from Selection").clicked() {
-                            // Calculate bounds of selected nodes
-                            let mut min_x = f32::INFINITY;
-                            let mut min_y = f32::INFINITY;
-                            let mut max_x = f32::NEG_INFINITY;
-                            let mut max_y = f32::NEG_INFINITY;
-                            
-                            let nodes: Vec<Uuid> = self.selected_nodes.iter().cloned().collect();
-                            
-                            for id in &nodes {
-                                if let Some(node) = graph.nodes.get(id) {
-                                    min_x = min_x.min(node.position.0);
-                                    min_y = min_y.min(node.position.1);
-                                    let size = node_sizes.get(id).cloned().unwrap_or(Vec2::new(150.0, 100.0));
-                                    let node_width = size.x / self.zoom;
-                                    let node_height = size.y / self.zoom;
-                                    
-                                    max_x = max_x.max(node.position.0 + node_width);
-                                    max_y = max_y.max(node.position.1 + node_height);
-                                }
-                            }
-                            
-                            if min_x != f32::INFINITY {
-                                let padding = 20.0;
-                                let group_id = Uuid::new_v4();
-                                let group = crate::graph::NodeGroup {
-                                    id: group_id,
-                                    name: "New Group".into(),
-                                    position: (min_x - padding, min_y - padding - 30.0),
-                                    size: (max_x - min_x + padding * 2.0, max_y - min_y + padding * 2.0 + 30.0),
-                                    color: [100, 100, 100, 255],
-                                    contained_nodes: nodes,
-                                };
-                                graph.groups.insert(group_id, group);
-                                ui.close();
-                            }
-                       }
-                   } else if let Some((group_id, group_name)) = group_info {
-                       // Node is already in a group - show group name and allow navigation
-                       let label = format!("📁 In Group: {}", if group_name.is_empty() { "Unnamed" } else { &group_name });
-                       if ui.button(&label).clicked() {
-                           // Pan to group
-                           if let Some(group) = graph.groups.get(&group_id) {
-                               let center = ui.ctx().available_rect().center().to_vec2();
-                               let virtual_offset = Vec2::new(5000.0, 5000.0);
-                               let group_pos = Vec2::new(group.position.0, group.position.1) + virtual_offset;
-                               self.pan = center - group_pos * self.zoom;
-                           }
-                           ui.close();
-                       }
-                   }
-               });
         }
 
         // Draw Selection Box with dashed lines
@@ -625,24 +760,33 @@ impl GraphEditor {
                     });
                     self.connection_start = None;
                     changed = true;
-                    
+
                     // Dynamic port expansion for StringJoin nodes
                     // When connecting to a StringJoin input, check if we need to add more ports
                     if let Some(target_node) = graph.nodes.get_mut(&to) {
-                        if matches!(target_node.node_type, crate::node_types::NodeType::StringJoin) {
+                        if matches!(
+                            target_node.node_type,
+                            crate::node_types::NodeType::StringJoin
+                        ) {
                             // Check if the last input port is now connected
                             if let Some(last_input) = target_node.inputs.last() {
                                 let last_name = last_input.name.clone();
-                                let last_is_connected = graph.connections.iter()
+                                let last_is_connected = graph
+                                    .connections
+                                    .iter()
                                     .any(|c| c.to_node == to && c.to_port == last_name);
-                                
+
                                 if last_is_connected {
                                     // Add a new input port
                                     let new_idx = target_node.inputs.len();
                                     target_node.inputs.push(super::graph::Port {
                                         name: format!("Input {}", new_idx),
-                                        data_type: super::node_types::DataType::Custom("Any".into()),
-                                        default_value: super::graph::VariableValue::String("".into()),
+                                        data_type: super::node_types::DataType::Custom(
+                                            "Any".into(),
+                                        ),
+                                        default_value: super::graph::VariableValue::String(
+                                            "".into(),
+                                        ),
                                     });
                                 }
                             }
@@ -707,14 +851,16 @@ impl GraphEditor {
 
         // Quick Add Menu (Spacebar) - only if not editing text
         let any_text_edit_has_focus = ui.ctx().memory(|m| m.focused().is_some());
-        if input_space && self.node_finder.is_none() && self.editing_node_name.is_none() && !any_text_edit_has_focus {
-
+        if input_space
+            && self.node_finder.is_none()
+            && self.editing_node_name.is_none()
+            && !any_text_edit_has_focus
+        {
             if let Some(pos) = pointer_pos {
                 self.node_finder = Some(pos);
                 self.node_finder_query.clear();
             }
         }
-
 
         if let Some(pos) = self.node_finder {
             let mut open = true;
@@ -730,204 +876,222 @@ impl GraphEditor {
                 .show(ui.ctx(), |ui| {
                     ui.text_edit_singleline(&mut self.node_finder_query)
                         .request_focus();
-                    
+
                     egui::ScrollArea::vertical()
                         .max_height(250.0)
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
-                        ui.set_min_width(200.0);
+                            ui.set_min_width(200.0);
 
+                            let options = vec![
+                                // Events
+                                (
+                                    "Event Tick",
+                                    crate::node_types::NodeType::BlueprintFunction {
+                                        name: "Event Tick".into(),
+                                    },
+                                ),
+                                (
+                                    "Print String",
+                                    crate::node_types::NodeType::BlueprintFunction {
+                                        name: "Print String".into(),
+                                    },
+                                ),
+                                // Control Flow
+                                ("Branch", crate::node_types::NodeType::Branch),
+                                ("For Loop", crate::node_types::NodeType::ForLoop),
+                                ("While Loop", crate::node_types::NodeType::WhileLoop),
+                                ("Delay", crate::node_types::NodeType::Delay),
+                                ("Sequence", crate::node_types::NodeType::Sequence),
+                                ("Gate", crate::node_types::NodeType::Gate),
+                                // Math
+                                ("Add", crate::node_types::NodeType::Add),
+                                ("Subtract", crate::node_types::NodeType::Subtract),
+                                ("Multiply", crate::node_types::NodeType::Multiply),
+                                ("Divide", crate::node_types::NodeType::Divide),
+                                ("Modulo (%)", crate::node_types::NodeType::Modulo),
+                                ("Power (^)", crate::node_types::NodeType::Power),
+                                ("Abs", crate::node_types::NodeType::Abs),
+                                ("Min", crate::node_types::NodeType::Min),
+                                ("Max", crate::node_types::NodeType::Max),
+                                ("Clamp", crate::node_types::NodeType::Clamp),
+                                ("Random", crate::node_types::NodeType::Random),
+                                ("Constant", crate::node_types::NodeType::Constant),
+                                // Comparison
+                                ("Equals (==)", crate::node_types::NodeType::Equals),
+                                ("Not Equals (!=)", crate::node_types::NodeType::NotEquals),
+                                ("Greater Than (>)", crate::node_types::NodeType::GreaterThan),
+                                (
+                                    "Greater or Equal (>=)",
+                                    crate::node_types::NodeType::GreaterThanOrEqual,
+                                ),
+                                ("Less Than (<)", crate::node_types::NodeType::LessThan),
+                                (
+                                    "Less or Equal (<=)",
+                                    crate::node_types::NodeType::LessThanOrEqual,
+                                ),
+                                // Logic
+                                ("And (&&)", crate::node_types::NodeType::And),
+                                ("Or (||)", crate::node_types::NodeType::Or),
+                                ("Not (!)", crate::node_types::NodeType::Not),
+                                ("Xor (^)", crate::node_types::NodeType::Xor),
+                                // String Operations
+                                ("Concat", crate::node_types::NodeType::Concat),
+                                ("Split", crate::node_types::NodeType::Split),
+                                ("Length", crate::node_types::NodeType::Length),
+                                ("Contains", crate::node_types::NodeType::Contains),
+                                ("Replace", crate::node_types::NodeType::Replace),
+                                ("Format", crate::node_types::NodeType::Format),
+                                ("String Join", crate::node_types::NodeType::StringJoin),
+                                ("String Between", crate::node_types::NodeType::StringBetween),
+                                // Conversions
+                                ("To Integer", crate::node_types::NodeType::ToInteger),
+                                ("To Float", crate::node_types::NodeType::ToFloat),
+                                ("To String", crate::node_types::NodeType::ToString),
+                                // I/O
+                                ("Read Input", crate::node_types::NodeType::ReadInput),
+                                ("File Read", crate::node_types::NodeType::FileRead),
+                                ("File Write", crate::node_types::NodeType::FileWrite),
+                                // Variables
+                                (
+                                    "Get Variable",
+                                    crate::node_types::NodeType::GetVariable {
+                                        name: "MyVar".into(),
+                                    },
+                                ),
+                                (
+                                    "Set Variable",
+                                    crate::node_types::NodeType::SetVariable {
+                                        name: "MyVar".into(),
+                                    },
+                                ),
+                                // System Control
+                                ("Run Command", crate::node_types::NodeType::RunCommand),
+                                ("Launch App", crate::node_types::NodeType::LaunchApp),
+                                ("Close App", crate::node_types::NodeType::CloseApp),
+                                ("Focus Window", crate::node_types::NodeType::FocusWindow),
+                                (
+                                    "Get Window Position",
+                                    crate::node_types::NodeType::GetWindowPosition,
+                                ),
+                                (
+                                    "Set Window Position",
+                                    crate::node_types::NodeType::SetWindowPosition,
+                                ),
+                                // Desktop Input Automation (Module A)
+                                ("Click", crate::node_types::NodeType::Click),
+                                ("Double Click", crate::node_types::NodeType::DoubleClick),
+                                ("Right Click", crate::node_types::NodeType::RightClick),
+                                ("Mouse Move", crate::node_types::NodeType::MouseMove),
+                                ("Mouse Down", crate::node_types::NodeType::MouseDown),
+                                ("Mouse Up", crate::node_types::NodeType::MouseUp),
+                                ("Scroll", crate::node_types::NodeType::Scroll),
+                                ("Key Press", crate::node_types::NodeType::KeyPress),
+                                ("Key Down", crate::node_types::NodeType::KeyDown),
+                                ("Key Up", crate::node_types::NodeType::KeyUp),
+                                ("Type Text", crate::node_types::NodeType::TypeText),
+                                ("Hot Key", crate::node_types::NodeType::HotKey),
+                                // Data Operations (Module H)
+                                ("Array Create", crate::node_types::NodeType::ArrayCreate),
+                                ("Array Push", crate::node_types::NodeType::ArrayPush),
+                                ("Array Pop", crate::node_types::NodeType::ArrayPop),
+                                ("Array Get", crate::node_types::NodeType::ArrayGet),
+                                ("Array Set", crate::node_types::NodeType::ArraySet),
+                                ("Array Length", crate::node_types::NodeType::ArrayLength),
+                                ("JSON Parse", crate::node_types::NodeType::JSONParse),
+                                ("JSON Stringify", crate::node_types::NodeType::JSONStringify),
+                                ("HTTP Request", crate::node_types::NodeType::HTTPRequest),
+                                // Screenshot & Image Tools (Module C)
+                                ("Screen Capture", crate::node_types::NodeType::ScreenCapture),
+                                (
+                                    "Save Screenshot",
+                                    crate::node_types::NodeType::SaveScreenshot,
+                                ),
+                                // Image Recognition (Module D)
+                                (
+                                    "Get Pixel Color",
+                                    crate::node_types::NodeType::GetPixelColor,
+                                ),
+                                ("Find Color", crate::node_types::NodeType::FindColor),
+                                ("Wait For Color", crate::node_types::NodeType::WaitForColor),
+                                ("Find Image", crate::node_types::NodeType::FindImage),
+                                ("Wait For Image", crate::node_types::NodeType::WaitForImage),
+                                (
+                                    "Image Similarity",
+                                    crate::node_types::NodeType::ImageSimilarity,
+                                ),
+                            ];
 
-                    let options = vec![
-                        // Events
-                        (
-                            "Event Tick",
-                            crate::node_types::NodeType::BlueprintFunction {
-                                name: "Event Tick".into(),
-                            },
-                        ),
-                        (
-                            "Print String",
-                            crate::node_types::NodeType::BlueprintFunction {
-                                name: "Print String".into(),
-                            },
-                        ),
-                        // Control Flow
-                        ("Branch", crate::node_types::NodeType::Branch),
-                        ("For Loop", crate::node_types::NodeType::ForLoop),
-                        ("While Loop", crate::node_types::NodeType::WhileLoop),
-                        ("Delay", crate::node_types::NodeType::Delay),
-                        ("Sequence", crate::node_types::NodeType::Sequence),
-                        ("Gate", crate::node_types::NodeType::Gate),
-                        // Math
-                        ("Add", crate::node_types::NodeType::Add),
-                        ("Subtract", crate::node_types::NodeType::Subtract),
-                        ("Multiply", crate::node_types::NodeType::Multiply),
-                        ("Divide", crate::node_types::NodeType::Divide),
-                        ("Modulo (%)", crate::node_types::NodeType::Modulo),
-                        ("Power (^)", crate::node_types::NodeType::Power),
-                        ("Abs", crate::node_types::NodeType::Abs),
-                        ("Min", crate::node_types::NodeType::Min),
-                        ("Max", crate::node_types::NodeType::Max),
-                        ("Clamp", crate::node_types::NodeType::Clamp),
-                        ("Random", crate::node_types::NodeType::Random),
-                        // Comparison
-                        ("Equals (==)", crate::node_types::NodeType::Equals),
-                        ("Not Equals (!=)", crate::node_types::NodeType::NotEquals),
-                        ("Greater Than (>)", crate::node_types::NodeType::GreaterThan),
-                        (
-                            "Greater or Equal (>=)",
-                            crate::node_types::NodeType::GreaterThanOrEqual,
-                        ),
-                        ("Less Than (<)", crate::node_types::NodeType::LessThan),
-                        (
-                            "Less or Equal (<=)",
-                            crate::node_types::NodeType::LessThanOrEqual,
-                        ),
-                        // Logic
-                        ("And (&&)", crate::node_types::NodeType::And),
-                        ("Or (||)", crate::node_types::NodeType::Or),
-                        ("Not (!)", crate::node_types::NodeType::Not),
-                        ("Xor (^)", crate::node_types::NodeType::Xor),
-                        // String Operations
-                        ("Concat", crate::node_types::NodeType::Concat),
-                        ("Split", crate::node_types::NodeType::Split),
-                        ("Length", crate::node_types::NodeType::Length),
-                        ("Contains", crate::node_types::NodeType::Contains),
-                        ("Replace", crate::node_types::NodeType::Replace),
-                        ("Format", crate::node_types::NodeType::Format),
-                        ("String Join", crate::node_types::NodeType::StringJoin),
-                        ("String Between", crate::node_types::NodeType::StringBetween),
-                        // Conversions
-                        ("To Integer", crate::node_types::NodeType::ToInteger),
-                        ("To Float", crate::node_types::NodeType::ToFloat),
-                        ("To String", crate::node_types::NodeType::ToString),
-                        // I/O
-                        ("Read Input", crate::node_types::NodeType::ReadInput),
-                        ("File Read", crate::node_types::NodeType::FileRead),
-                        ("File Write", crate::node_types::NodeType::FileWrite),
-                        // Variables
-                        (
-                            "Get Variable",
-                            crate::node_types::NodeType::GetVariable {
-                                name: "MyVar".into(),
-                            },
-                        ),
-                        (
-                            "Set Variable",
-                            crate::node_types::NodeType::SetVariable {
-                                name: "MyVar".into(),
-                            },
-                        ),
-                        // System Control
-                        ("Run Command", crate::node_types::NodeType::RunCommand),
-                        ("Launch App", crate::node_types::NodeType::LaunchApp),
-                        ("Close App", crate::node_types::NodeType::CloseApp),
-                        ("Focus Window", crate::node_types::NodeType::FocusWindow),
-                        ("Get Window Position", crate::node_types::NodeType::GetWindowPosition),
-                        ("Set Window Position", crate::node_types::NodeType::SetWindowPosition),
-                        // Desktop Input Automation (Module A)
-                        ("Click", crate::node_types::NodeType::Click),
-                        ("Double Click", crate::node_types::NodeType::DoubleClick),
-                        ("Right Click", crate::node_types::NodeType::RightClick),
-                        ("Mouse Move", crate::node_types::NodeType::MouseMove),
-                        ("Mouse Down", crate::node_types::NodeType::MouseDown),
-                        ("Mouse Up", crate::node_types::NodeType::MouseUp),
-                        ("Scroll", crate::node_types::NodeType::Scroll),
-                        ("Key Press", crate::node_types::NodeType::KeyPress),
-                        ("Key Down", crate::node_types::NodeType::KeyDown),
-                        ("Key Up", crate::node_types::NodeType::KeyUp),
-                        ("Type Text", crate::node_types::NodeType::TypeText),
-                        ("Hot Key", crate::node_types::NodeType::HotKey),
-                        // Data Operations (Module H)
-                        ("Array Create", crate::node_types::NodeType::ArrayCreate),
-                        ("Array Push", crate::node_types::NodeType::ArrayPush),
-                        ("Array Pop", crate::node_types::NodeType::ArrayPop),
-                        ("Array Get", crate::node_types::NodeType::ArrayGet),
-                        ("Array Set", crate::node_types::NodeType::ArraySet),
-                        ("Array Length", crate::node_types::NodeType::ArrayLength),
-                        ("JSON Parse", crate::node_types::NodeType::JSONParse),
-                        ("JSON Stringify", crate::node_types::NodeType::JSONStringify),
-                        ("HTTP Request", crate::node_types::NodeType::HTTPRequest),
-                        // Screenshot & Image Tools (Module C)
-                        ("Screen Capture", crate::node_types::NodeType::ScreenCapture),
-                        ("Save Screenshot", crate::node_types::NodeType::SaveScreenshot),
-                        // Image Recognition (Module D)
-                        ("Get Pixel Color", crate::node_types::NodeType::GetPixelColor),
-                        ("Find Color", crate::node_types::NodeType::FindColor),
-                        ("Wait For Color", crate::node_types::NodeType::WaitForColor),
-                        ("Find Image", crate::node_types::NodeType::FindImage),
-                        ("Wait For Image", crate::node_types::NodeType::WaitForImage),
-                        ("Image Similarity", crate::node_types::NodeType::ImageSimilarity),
-                    ];
-
-
-                    // Fuzzy search: remove whitespace and support abbreviation matching
-                    let query_normalized: String = self.node_finder_query
-                        .to_lowercase()
-                        .chars()
-                        .filter(|c| !c.is_whitespace())
-                        .collect();
-                    
-                    let filtered_options: Vec<_> = options
-                        .into_iter()
-                        .filter(|(label, _)| {
-                            if query_normalized.is_empty() {
-                                return true;
-                            }
-                            let label_lower = label.to_lowercase();
-                            let label_no_space: String = label_lower.chars().filter(|c| !c.is_whitespace()).collect();
-                            
-                            // Check if label contains query (ignoring spaces)
-                            if label_no_space.contains(&query_normalized) {
-                                return true;
-                            }
-                            
-                            // Check abbreviation match (first letter of each word)
-                            let abbreviation: String = label.split_whitespace()
-                                .filter_map(|word| word.chars().next())
-                                .map(|c| c.to_lowercase().next().unwrap_or(c))
+                            // Fuzzy search: remove whitespace and support abbreviation matching
+                            let query_normalized: String = self
+                                .node_finder_query
+                                .to_lowercase()
+                                .chars()
+                                .filter(|c| !c.is_whitespace())
                                 .collect();
-                            if abbreviation.contains(&query_normalized) {
-                                return true;
+
+                            let filtered_options: Vec<_> = options
+                                .into_iter()
+                                .filter(|(label, _)| {
+                                    if query_normalized.is_empty() {
+                                        return true;
+                                    }
+                                    let label_lower = label.to_lowercase();
+                                    let label_no_space: String = label_lower
+                                        .chars()
+                                        .filter(|c| !c.is_whitespace())
+                                        .collect();
+
+                                    // Check if label contains query (ignoring spaces)
+                                    if label_no_space.contains(&query_normalized) {
+                                        return true;
+                                    }
+
+                                    // Check abbreviation match (first letter of each word)
+                                    let abbreviation: String = label
+                                        .split_whitespace()
+                                        .filter_map(|word| word.chars().next())
+                                        .map(|c| c.to_lowercase().next().unwrap_or(c))
+                                        .collect();
+                                    if abbreviation.contains(&query_normalized) {
+                                        return true;
+                                    }
+
+                                    false
+                                })
+                                .collect();
+
+                            let activate_first = ui.input(|i| {
+                                i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Tab)
+                            });
+
+                            for (label, node_type) in filtered_options {
+                                if ui.button(label).clicked() || activate_first {
+                                    // activate_first = false; // logic flow breaks anyway
+
+                                    let id = Uuid::new_v4();
+                                    let (inputs, outputs) = Self::get_ports_for_type(&node_type);
+                                    let graph_pos = self.from_screen(pos, clip_rect.min);
+                                    let z_order = self.next_z_order;
+                                    self.next_z_order += 1;
+                                    graph.nodes.insert(
+                                        id,
+                                        Node {
+                                            id,
+                                            node_type,
+                                            position: (graph_pos.x, graph_pos.y),
+                                            inputs,
+                                            outputs,
+                                            z_order,
+                                            display_name: None,
+                                        },
+                                    );
+                                    self.node_finder = None;
+                                    changed = true;
+                                    break;
+                                }
                             }
-                            
-                            false
-                        })
-                        .collect();
-
-
-                    let activate_first = ui.input(|i| {
-                        i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Tab)
-                    });
-
-                    for (label, node_type) in filtered_options {
-                        if ui.button(label).clicked() || activate_first {
-                            // activate_first = false; // logic flow breaks anyway
-
-                            let id = Uuid::new_v4();
-                            let (inputs, outputs) = Self::get_ports_for_type(&node_type);
-                            let graph_pos = self.from_screen(pos, clip_rect.min);
-                            let z_order = self.next_z_order;
-                            self.next_z_order += 1;
-                            graph.nodes.insert(
-                                id,
-                                Node {
-                                    id,
-                                    node_type,
-                                    position: (graph_pos.x, graph_pos.y),
-                                    inputs,
-                                    outputs,
-                                    z_order,
-                                    display_name: None,
-                                },
-                            );
-                            self.node_finder = None;
-                            changed = true;
-                            break;
-                        }
-                    }
-                    }); // Close ScrollArea
+                        }); // Close ScrollArea
                 });
 
             if let Some(inner) = window_response {
@@ -955,7 +1119,9 @@ impl GraphEditor {
                     ui.separator();
                     ui.horizontal(|ui| {
                         ui.label("Font Size:");
-                        ui.add(egui::Slider::new(&mut self.style.font_size, 8.0..=24.0).suffix("px"));
+                        ui.add(
+                            egui::Slider::new(&mut self.style.font_size, 8.0..=24.0).suffix("px"),
+                        );
                     });
                     ui.separator();
                     ui.label("Header Colors");
@@ -967,7 +1133,6 @@ impl GraphEditor {
                     }
                 });
         }
-
 
         if input_primary_released && self.dragging_node.is_some() {
             changed = true;
@@ -1001,24 +1166,26 @@ impl GraphEditor {
         });
 
         if create_group_action && !self.selected_nodes.is_empty() {
-             // Calculate bounds of selected nodes
+            // Calculate bounds of selected nodes
             let mut min_x = f32::INFINITY;
             let mut min_y = f32::INFINITY;
             let mut max_x = f32::NEG_INFINITY;
             let mut max_y = f32::NEG_INFINITY;
-            
+
             let mut nodes: Vec<Uuid> = self.selected_nodes.iter().cloned().collect();
-            
+
             // Issue 2: Prevent Double Grouping
             // Filter out nodes that are already in a group?
             // Actually, we can check if any of these nodes are in any existing group's contained_nodes list.
             // But checking all groups is O(N*M). Since N and M are small, it's fine.
-            let already_grouped: std::collections::HashSet<Uuid> = graph.groups.values()
+            let already_grouped: std::collections::HashSet<Uuid> = graph
+                .groups
+                .values()
                 .flat_map(|g| g.contained_nodes.clone())
                 .collect();
-                
+
             nodes.retain(|id| !already_grouped.contains(id));
-            
+
             if nodes.is_empty() {
                 // If all selected were already grouped, maybe we should just return or notify?
                 // For now, just don't create an empty group.
@@ -1036,12 +1203,12 @@ impl GraphEditor {
                         // Actually, we can just use a slightly larger default or update this logic later.
                         let node_width = 200.0; // Increased width safety
                         let node_height = 150.0;
-                        
+
                         max_x = max_x.max(node.position.0 + node_width);
                         max_y = max_y.max(node.position.1 + node_height);
                     }
                 }
-                
+
                 if min_x != f32::INFINITY {
                     let padding = 30.0;
                     let group_id = Uuid::new_v4();
@@ -1049,7 +1216,10 @@ impl GraphEditor {
                         id: group_id,
                         name: "New Group".into(),
                         position: (min_x - padding, min_y - padding - 30.0), // Extra top padding for header
-                        size: (max_x - min_x + padding * 2.0, max_y - min_y + padding * 2.0 + 30.0),
+                        size: (
+                            max_x - min_x + padding * 2.0,
+                            max_y - min_y + padding * 2.0 + 30.0,
+                        ),
                         color: [100, 100, 100, 255],
                         contained_nodes: nodes,
                     };
@@ -2501,7 +2671,7 @@ impl GraphEditor {
                 }],
             ),
             // === Module H: Data Operations ===
-            
+
             // ArrayCreate - Create an empty array
             NodeType::ArrayCreate => (
                 vec![],
@@ -2511,7 +2681,7 @@ impl GraphEditor {
                     default_value: VariableValue::Array(vec![]),
                 }],
             ),
-            
+
             // ArrayPush - Add element to end of array (execution flow)
             NodeType::ArrayPush => (
                 vec![
@@ -2537,7 +2707,7 @@ impl GraphEditor {
                     default_value: VariableValue::None,
                 }],
             ),
-            
+
             // ArrayPop - Remove and return last element (execution flow)
             NodeType::ArrayPop => (
                 vec![
@@ -2565,7 +2735,7 @@ impl GraphEditor {
                     },
                 ],
             ),
-            
+
             // ArrayGet - Get element by index (pure function)
             NodeType::ArrayGet => (
                 vec![
@@ -2586,7 +2756,7 @@ impl GraphEditor {
                     default_value: VariableValue::None,
                 }],
             ),
-            
+
             // ArraySet - Set element by index (execution flow)
             NodeType::ArraySet => (
                 vec![
@@ -2617,7 +2787,7 @@ impl GraphEditor {
                     default_value: VariableValue::None,
                 }],
             ),
-            
+
             // ArrayLength - Get length of array (pure function)
             NodeType::ArrayLength => (
                 vec![Port {
@@ -2631,7 +2801,7 @@ impl GraphEditor {
                     default_value: VariableValue::Integer(0),
                 }],
             ),
-            
+
             // JSONParse - Parse JSON string (pure function)
             NodeType::JSONParse => (
                 vec![Port {
@@ -2645,7 +2815,7 @@ impl GraphEditor {
                     default_value: VariableValue::None,
                 }],
             ),
-            
+
             // JSONStringify - Convert value to JSON string (pure function)
             NodeType::JSONStringify => (
                 vec![Port {
@@ -2659,7 +2829,7 @@ impl GraphEditor {
                     default_value: VariableValue::String("".into()),
                 }],
             ),
-            
+
             // HTTPRequest - Make HTTP request (execution flow)
             NodeType::HTTPRequest => (
                 vec![
@@ -2702,7 +2872,7 @@ impl GraphEditor {
                     },
                 ],
             ),
-            
+
             // Screenshot & Image Tools (Module C)
             // ScreenCapture - Capture full screen or specific display
             NodeType::ScreenCapture => (
@@ -2736,7 +2906,7 @@ impl GraphEditor {
                     },
                 ],
             ),
-            
+
             // SaveScreenshot - Save screenshot to file
             NodeType::SaveScreenshot => (
                 vec![
@@ -2774,7 +2944,7 @@ impl GraphEditor {
                     },
                 ],
             ),
-            
+
             // Image Recognition (Module D)
             // GetPixelColor - Get RGB color at screen coordinates
             NodeType::GetPixelColor => (
@@ -2823,7 +2993,7 @@ impl GraphEditor {
                     },
                 ],
             ),
-            
+
             // FindColor - Search for color in screen region
             NodeType::FindColor => (
                 vec![
@@ -2896,7 +3066,7 @@ impl GraphEditor {
                     },
                 ],
             ),
-            
+
             // WaitForColor - Wait until color appears
             NodeType::WaitForColor => (
                 vec![
@@ -2954,7 +3124,7 @@ impl GraphEditor {
                     },
                 ],
             ),
-            
+
             // FindImage - Template matching on screen
             NodeType::FindImage => (
                 vec![
@@ -3017,7 +3187,7 @@ impl GraphEditor {
                     },
                 ],
             ),
-            
+
             // WaitForImage - Wait until image appears on screen
             NodeType::WaitForImage => (
                 vec![
@@ -3065,7 +3235,7 @@ impl GraphEditor {
                     },
                 ],
             ),
-            
+
             // ImageSimilarity - Compare two images with tolerance (pure function)
             NodeType::ImageSimilarity => (
                 vec![
@@ -3098,10 +3268,23 @@ impl GraphEditor {
                     },
                 ],
             ),
+
+            // Constant - Simple value passthrough
+            NodeType::Constant => (
+                vec![Port {
+                    name: "Value".into(),
+                    data_type: DataType::Float,
+                    default_value: VariableValue::Float(0.0),
+                }],
+                vec![Port {
+                    name: "Out".into(),
+                    data_type: DataType::Float,
+                    default_value: VariableValue::Float(0.0),
+                }],
+            ),
             _ => (vec![], vec![]),
         }
     }
-
 
     fn draw_node(
         &mut self,
@@ -3111,6 +3294,7 @@ impl GraphEditor {
         input_primary_released: bool,
         connections: &[crate::graph::Connection],
         node_sizes: &std::collections::HashMap<Uuid, Vec2>,
+        overlapping_groups: &[(Uuid, String)], // Groups this node overlaps by >=50%
     ) -> (
         Vec2,
         Option<(Uuid, String, bool)>,
@@ -3122,6 +3306,7 @@ impl GraphEditor {
         bool,
         bool,
         bool,
+        Option<Uuid>, // add_to_group_id - if user clicked "Add to Group"
     ) {
         let node_pos = Pos2::new(node.position.0, node.position.1);
         let screen_pos = self.to_screen(node_pos, ui.max_rect().min);
@@ -3239,7 +3424,11 @@ impl GraphEditor {
         }
 
         // 2. Interact with Node Background
-        let response = ui.interact(node_rect, ui.id().with(node.id).with("node_bg"), Sense::click_and_drag());
+        let response = ui.interact(
+            node_rect,
+            ui.id().with(node.id).with("node_bg"),
+            Sense::click_and_drag(),
+        );
         if response.dragged() && !pressed_any_port {
             drag_delta = response.drag_delta() / self.zoom;
         }
@@ -3248,7 +3437,6 @@ impl GraphEditor {
         let clicked = response.clicked_by(egui::PointerButton::Primary);
         let right_clicked = response.clicked_by(egui::PointerButton::Secondary);
         let pressed_node = response.drag_started() || response.hovered() && input_primary_pressed;
-
 
         if self.selected_nodes.contains(&node.id) {
             ui.painter().rect_stroke(
@@ -3373,6 +3561,10 @@ impl GraphEditor {
         ui.painter().rect_filled(header_rect, 5.0, *header_color);
 
         // Show text edit if this node is being edited, otherwise show title
+        // Cancel editing if node is no longer selected
+        if self.editing_node_name == Some(node.id) && !self.selected_nodes.contains(&node.id) {
+            self.editing_node_name = None;
+        }
         if self.editing_node_name == Some(node.id) {
             if let Some(ref mut name) = node.display_name {
                 let edit_rect = Rect::from_center_size(
@@ -3381,11 +3573,16 @@ impl GraphEditor {
                 );
                 let response = ui
                     .scope_builder(egui::UiBuilder::new().max_rect(edit_rect), |ui| {
+                        ui.style_mut().text_styles.insert(
+                            egui::TextStyle::Body,
+                            egui::FontId::proportional(14.0 * self.zoom),
+                        );
                         let r = ui.add(
                             egui::TextEdit::singleline(name)
                                 .hint_text("Enter name...")
                                 .desired_width(edit_rect.width()),
                         );
+                        r.request_focus();
                         r
                     })
                     .inner;
@@ -3417,6 +3614,10 @@ impl GraphEditor {
                 Vec2::new(100.0 * self.zoom, 18.0 * self.zoom),
             );
             ui.scope_builder(egui::UiBuilder::new().max_rect(edit_rect), |ui| {
+                ui.style_mut().text_styles.insert(
+                    egui::TextStyle::Body,
+                    egui::FontId::proportional(14.0 * self.zoom),
+                );
                 ui.text_edit_singleline(name);
             });
         }
@@ -3435,17 +3636,18 @@ impl GraphEditor {
         for input in &mut node.inputs {
             let port_pos = screen_pos + Vec2::new(0.0, y_offset);
             let port_color = self.get_type_color(&input.data_type);
-            
+
             // Increased port circle from 5 to 7 for better visibility
-            ui.painter().circle_filled(
-                port_pos,
-                7.0 * self.zoom,
-                port_color,
-            );
-            
+            ui.painter()
+                .circle_filled(port_pos, 7.0 * self.zoom, port_color);
+
             // Add hover highlight effect with glowing stroke
-            let is_hovered = self.hovered_port.as_ref()
-                .map_or(false, |(id, name, is_input)| *id == node.id && name == &input.name && *is_input);
+            let is_hovered = self
+                .hovered_port
+                .as_ref()
+                .map_or(false, |(id, name, is_input)| {
+                    *id == node.id && name == &input.name && *is_input
+                });
             if is_hovered {
                 ui.painter().circle_stroke(
                     port_pos,
@@ -3475,31 +3677,54 @@ impl GraphEditor {
 
                 let inner_changed = ui
                     .scope_builder(egui::UiBuilder::new().max_rect(edit_rect), |ui| {
+                        ui.style_mut().text_styles.insert(
+                            egui::TextStyle::Body,
+                            egui::FontId::proportional(12.0 * self.zoom),
+                        );
                         use crate::graph::VariableValue;
                         let mut c = false;
                         match &mut input.default_value {
                             VariableValue::String(s) => {
-                                let is_key = input.name == "Key" && matches!(node.node_type, 
-                                    crate::node_types::NodeType::KeyPress | crate::node_types::NodeType::KeyDown | 
-                                    crate::node_types::NodeType::KeyUp | crate::node_types::NodeType::HotKey);
-                                let is_btn = input.name == "Button" && matches!(node.node_type,
-                                    crate::node_types::NodeType::MouseDown | crate::node_types::NodeType::MouseUp);
-                                
+                                let is_key = input.name == "Key"
+                                    && matches!(
+                                        node.node_type,
+                                        crate::node_types::NodeType::KeyPress
+                                            | crate::node_types::NodeType::KeyDown
+                                            | crate::node_types::NodeType::KeyUp
+                                            | crate::node_types::NodeType::HotKey
+                                    );
+                                let is_btn = input.name == "Button"
+                                    && matches!(
+                                        node.node_type,
+                                        crate::node_types::NodeType::MouseDown
+                                            | crate::node_types::NodeType::MouseUp
+                                    );
+
                                 if is_key || is_btn {
-                                    let popup_id = ui.make_persistent_id(format!("popup_{}_{}", node.id, input.name));
+                                    let popup_id = ui.make_persistent_id(format!(
+                                        "popup_{}_{}",
+                                        node.id, input.name
+                                    ));
 
                                     ui.horizontal(|ui| {
-                                        let text_color = if (is_key && (s.len() == 1 || VALID_KEYS.contains(&s.to_lowercase().as_str()))) 
-                                            || (is_btn && VALID_BUTTONS.contains(&s.to_lowercase().as_str())) {
+                                        let text_color = if (is_key
+                                            && (s.len() == 1
+                                                || VALID_KEYS.contains(&s.to_lowercase().as_str())))
+                                            || (is_btn
+                                                && VALID_BUTTONS
+                                                    .contains(&s.to_lowercase().as_str()))
+                                        {
                                             Color32::WHITE
                                         } else {
                                             Color32::RED
                                         };
-                                        
-                                        let response = ui.add(egui::TextEdit::singleline(s)
-                                            .desired_width(80.0 * self.zoom)
-                                            .text_color(text_color));
-                                        
+
+                                        let response = ui.add(
+                                            egui::TextEdit::singleline(s)
+                                                .desired_width(80.0 * self.zoom)
+                                                .text_color(text_color),
+                                        );
+
                                         if response.lost_focus() {
                                             c = true;
                                         }
@@ -3507,41 +3732,74 @@ impl GraphEditor {
                                             ui.memory_mut(|m| m.open_popup(popup_id));
                                             c = true;
                                         }
-                                        
+
                                         if ui.add(egui::Button::new("▼").small()).clicked() {
                                             ui.memory_mut(|m| m.toggle_popup(popup_id));
                                         }
-                                        
-                                        egui::popup_below_widget(ui, popup_id, &response, egui::PopupCloseBehavior::CloseOnClickOutside, |ui: &mut egui::Ui| {
-                                            egui::Resize::default()
-                                                .id_salt(popup_id)
-                                                .min_size(Vec2::new(150.0, 100.0))
-                                                .max_size(Vec2::new(400.0, ui.ctx().viewport_rect().height() - 50.0))
-                                                .with_stroke(true)
-                                                .show(ui, |ui| {
-                                                    egui::ScrollArea::vertical().show(ui, |ui| {
-                                                        let options = if is_key { VALID_KEYS } else { VALID_BUTTONS };
-                                                        let search = s.to_lowercase();
-                                                        for &opt in options {
-                                                            if !search.is_empty() && !opt.contains(&search) {
-                                                                continue;
-                                                            }
-                                                            if ui.add(egui::Button::new(opt).frame(false)).clicked() {
-                                                                *s = opt.to_string();
-                                                                c = true;
-                                                                ui.close();
-                                                            }
-                                                        }
-                                                        
-                                                        if options.iter().all(|o| !search.is_empty() && !o.contains(&search)) {
-                                                            ui.label("No matches");
-                                                        }
+
+                                        egui::popup_below_widget(
+                                            ui,
+                                            popup_id,
+                                            &response,
+                                            egui::PopupCloseBehavior::CloseOnClickOutside,
+                                            |ui: &mut egui::Ui| {
+                                                egui::Resize::default()
+                                                    .id_salt(popup_id)
+                                                    .min_size(Vec2::new(150.0, 100.0))
+                                                    .max_size(Vec2::new(
+                                                        400.0,
+                                                        ui.ctx().viewport_rect().height() - 50.0,
+                                                    ))
+                                                    .with_stroke(true)
+                                                    .show(ui, |ui| {
+                                                        egui::ScrollArea::vertical().show(
+                                                            ui,
+                                                            |ui| {
+                                                                let options = if is_key {
+                                                                    VALID_KEYS
+                                                                } else {
+                                                                    VALID_BUTTONS
+                                                                };
+                                                                let search = s.to_lowercase();
+                                                                for &opt in options {
+                                                                    if !search.is_empty()
+                                                                        && !opt.contains(&search)
+                                                                    {
+                                                                        continue;
+                                                                    }
+                                                                    if ui
+                                                                        .add(
+                                                                            egui::Button::new(opt)
+                                                                                .frame(false),
+                                                                        )
+                                                                        .clicked()
+                                                                    {
+                                                                        *s = opt.to_string();
+                                                                        c = true;
+                                                                        ui.close();
+                                                                    }
+                                                                }
+
+                                                                if options.iter().all(|o| {
+                                                                    !search.is_empty()
+                                                                        && !o.contains(&search)
+                                                                }) {
+                                                                    ui.label("No matches");
+                                                                }
+                                                            },
+                                                        );
                                                     });
-                                                });
-                                        });
+                                            },
+                                        );
                                     });
                                 } else {
-                                    if ui.add(egui::TextEdit::singleline(s).desired_width(70.0 * self.zoom)).lost_focus() {
+                                    if ui
+                                        .add(
+                                            egui::TextEdit::singleline(s)
+                                                .desired_width(70.0 * self.zoom),
+                                        )
+                                        .lost_focus()
+                                    {
                                         c = true;
                                     }
                                 }
@@ -3575,6 +3833,26 @@ impl GraphEditor {
             y_offset += 25.0 * self.zoom;
         }
 
+        // StringJoin dynamic port expansion based on text content
+        // When the last input has content, add a new empty input
+        if matches!(node.node_type, crate::node_types::NodeType::StringJoin) {
+            if let Some(last_input) = node.inputs.last() {
+                let has_content = match &last_input.default_value {
+                    crate::graph::VariableValue::String(s) => !s.is_empty(),
+                    _ => false,
+                };
+                if has_content {
+                    let new_idx = node.inputs.len();
+                    node.inputs.push(super::graph::Port {
+                        name: format!("Input {}", new_idx),
+                        data_type: super::node_types::DataType::Custom("Any".into()),
+                        default_value: super::graph::VariableValue::String("".into()),
+                    });
+                    content_changed = true;
+                }
+            }
+        }
+
         let mut y_offset = 30.0 * self.zoom;
         if matches!(
             node.node_type,
@@ -3589,15 +3867,16 @@ impl GraphEditor {
             let port_color = self.get_type_color(&output.data_type);
 
             // Increased port circle from 5 to 7 for better visibility
-            ui.painter().circle_filled(
-                port_pos,
-                7.0 * self.zoom,
-                port_color,
-            );
+            ui.painter()
+                .circle_filled(port_pos, 7.0 * self.zoom, port_color);
 
             // Add hover highlight effect with glowing stroke
-            let is_hovered = self.hovered_port.as_ref()
-                .map_or(false, |(id, name, is_input)| *id == node.id && name == &output.name && !*is_input);
+            let is_hovered = self
+                .hovered_port
+                .as_ref()
+                .map_or(false, |(id, name, is_input)| {
+                    *id == node.id && name == &output.name && !*is_input
+                });
             if is_hovered {
                 ui.painter().circle_stroke(
                     port_pos,
@@ -3619,6 +3898,7 @@ impl GraphEditor {
         let mut disconnect_all = false;
         let mut delete_node = false;
         let mut copy_node = false;
+        let mut add_to_group_id: Option<Uuid> = None;
         response.context_menu(|ui| {
             if matches!(
                 node.node_type,
@@ -3705,6 +3985,24 @@ impl GraphEditor {
                 ui.separator();
             }
 
+            // Add to Group submenu - only show if there are overlapping groups
+            if !overlapping_groups.is_empty() {
+                ui.menu_button("Add to Group", |ui| {
+                    for (group_id, group_name) in overlapping_groups {
+                        let label = if group_name.is_empty() {
+                            "Unnamed Group".to_string()
+                        } else {
+                            group_name.clone()
+                        };
+                        if ui.button(&label).clicked() {
+                            add_to_group_id = Some(*group_id);
+                            ui.close();
+                        }
+                    }
+                });
+                ui.separator();
+            }
+
             if ui.button("Rename").clicked() {
                 self.editing_node_name = Some(node.id);
                 if node.display_name.is_none() {
@@ -3737,6 +4035,7 @@ impl GraphEditor {
             content_changed,
             delete_node,
             copy_node,
+            add_to_group_id,
         )
     }
 
@@ -4070,15 +4369,17 @@ impl GraphEditor {
         let mut group_move_delta = Vec2::ZERO;
         let mut group_to_move: Option<Uuid> = None;
         let mut delete_group_id: Option<Uuid> = None;
-        
+
         // Z-order: larger groups drawn first (behind smaller ones)
         let mut sorted_groups: Vec<Uuid> = graph.groups.keys().cloned().collect();
         sorted_groups.sort_by(|a, b| {
-             let ga = &graph.groups[a];
-             let gb = &graph.groups[b];
-             let area_b = gb.size.0 * gb.size.1;
-             let area_a = ga.size.0 * ga.size.1;
-             area_b.partial_cmp(&area_a).unwrap_or(std::cmp::Ordering::Equal)
+            let ga = &graph.groups[a];
+            let gb = &graph.groups[b];
+            let area_b = gb.size.0 * gb.size.1;
+            let area_a = ga.size.0 * ga.size.1;
+            area_b
+                .partial_cmp(&area_a)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
 
         for group_id in sorted_groups {
@@ -4090,16 +4391,16 @@ impl GraphEditor {
             let pos = Pos2::new(group.position.0, group.position.1);
             let size = Vec2::new(group.size.0, group.size.1);
             let screen_pos = self.to_screen(pos, canvas_offset);
-            
+
             let rect = Rect::from_min_size(screen_pos, size * self.zoom);
             let header_height = 24.0 * self.zoom;
             let header_rect = Rect::from_min_size(rect.min, Vec2::new(rect.width(), header_height));
 
             // Header interaction (drag to move group)
             let header_response = ui.interact(
-                header_rect, 
-                ui.id().with(group.id).with("header"), 
-                Sense::click_and_drag()
+                header_rect,
+                ui.id().with(group.id).with("header"),
+                Sense::click_and_drag(),
             );
 
             // Double-click on header to rename
@@ -4119,16 +4420,16 @@ impl GraphEditor {
                 group_move_delta = header_response.drag_delta() / self.zoom;
                 group_to_move = Some(group.id);
             }
-            
+
             // Resize handle
             let resize_size = Vec2::splat(12.0 * self.zoom);
             let resize_rect = Rect::from_min_size(rect.max - resize_size, resize_size);
             let resize_response = ui.interact(
                 resize_rect,
                 ui.id().with(group.id).with("resize"),
-                Sense::drag()
+                Sense::drag(),
             );
-            
+
             if resize_response.dragged() {
                 let delta = resize_response.drag_delta() / self.zoom;
                 group.size.0 = (group.size.0 + delta.x).max(100.0);
@@ -4138,52 +4439,75 @@ impl GraphEditor {
             // --- Rendering ---
             // Background
             let bg_color = Color32::from_rgba_unmultiplied(
-                group.color[0], group.color[1], group.color[2], 
-                (group.color[3] as f32 * 0.25) as u8
+                group.color[0],
+                group.color[1],
+                group.color[2],
+                (group.color[3] as f32 * 0.25) as u8,
             );
             ui.painter().rect_filled(rect, 8.0, bg_color);
-            
+
             // Border
             ui.painter().rect_stroke(
-                rect, 8.0, 
-                Stroke::new(2.0, Color32::from_rgba_unmultiplied(
-                    group.color[0], group.color[1], group.color[2], group.color[3]
-                )),
-                egui::StrokeKind::Middle
+                rect,
+                8.0,
+                Stroke::new(
+                    2.0,
+                    Color32::from_rgba_unmultiplied(
+                        group.color[0],
+                        group.color[1],
+                        group.color[2],
+                        group.color[3],
+                    ),
+                ),
+                egui::StrokeKind::Middle,
             );
-            
+
             // Header
             ui.painter().rect_filled(
-                header_rect, 
-                CornerRadius { nw: 8, ne: 8, sw: 0, se: 0 }, 
+                header_rect,
+                CornerRadius {
+                    nw: 8,
+                    ne: 8,
+                    sw: 0,
+                    se: 0,
+                },
                 Color32::from_rgba_unmultiplied(
-                    group.color[0], group.color[1], group.color[2], group.color[3]
-                )
+                    group.color[0],
+                    group.color[1],
+                    group.color[2],
+                    group.color[3],
+                ),
             );
-            
+
             // Title text or TextEdit (if editing)
             if self.editing_group_name == Some(group.id) {
                 // Show TextEdit for rename
                 let title_rect = Rect::from_min_size(
-                    header_rect.min + Vec2::new(8.0 * self.zoom, 2.0 * self.zoom), 
-                    Vec2::new(header_rect.width() - 16.0 * self.zoom, header_height - 4.0 * self.zoom)
+                    header_rect.min + Vec2::new(8.0 * self.zoom, 2.0 * self.zoom),
+                    Vec2::new(
+                        header_rect.width() - 16.0 * self.zoom,
+                        header_height - 4.0 * self.zoom,
+                    ),
                 );
                 let mut title_ui = ui.new_child(egui::UiBuilder::new().max_rect(title_rect));
                 let font_id = egui::FontId::proportional(14.0 * self.zoom);
-                title_ui.style_mut().text_styles.insert(egui::TextStyle::Body, font_id);
-                
+                title_ui
+                    .style_mut()
+                    .text_styles
+                    .insert(egui::TextStyle::Body, font_id);
+
                 let response = title_ui.add(
                     egui::TextEdit::singleline(&mut group.name)
                         .frame(false)
                         .text_color(Color32::WHITE)
-                        .desired_width(title_rect.width())
+                        .desired_width(title_rect.width()),
                 );
-                
+
                 // Stop editing on Enter or lose focus
                 if response.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     self.editing_group_name = None;
                 }
-                
+
                 // Request focus on first frame
                 if !response.has_focus() {
                     response.request_focus();
@@ -4195,28 +4519,33 @@ impl GraphEditor {
                     egui::Align2::LEFT_CENTER,
                     &group.name,
                     egui::FontId::proportional(14.0 * self.zoom),
-                    Color32::WHITE
+                    Color32::WHITE,
                 );
             }
-            
+
             // Resize indicator
             let resize_color = Color32::from_white_alpha(120);
             ui.painter().line_segment(
-                [rect.max - Vec2::new(10.0, 2.0) * self.zoom, rect.max - Vec2::new(2.0, 2.0) * self.zoom], 
-                Stroke::new(2.0, resize_color)
+                [
+                    rect.max - Vec2::new(10.0, 2.0) * self.zoom,
+                    rect.max - Vec2::new(2.0, 2.0) * self.zoom,
+                ],
+                Stroke::new(2.0, resize_color),
             );
             ui.painter().line_segment(
-                [rect.max - Vec2::new(2.0, 10.0) * self.zoom, rect.max - Vec2::new(2.0, 2.0) * self.zoom], 
-                Stroke::new(2.0, resize_color)
+                [
+                    rect.max - Vec2::new(2.0, 10.0) * self.zoom,
+                    rect.max - Vec2::new(2.0, 2.0) * self.zoom,
+                ],
+                Stroke::new(2.0, resize_color),
             );
         }
-        
 
         // Apply group deletion
         if let Some(id) = delete_group_id {
             graph.groups.remove(&id);
         }
-        
+
         // Apply group movement (both group position AND contained nodes)
         if let Some(group_id) = group_to_move {
             if group_move_delta != Vec2::ZERO {
@@ -4225,7 +4554,7 @@ impl GraphEditor {
                     group.position.0 += group_move_delta.x;
                     group.position.1 += group_move_delta.y;
                 }
-                
+
                 // Then move all contained nodes
                 if let Some(group) = graph.groups.get(&group_id) {
                     let node_ids = group.contained_nodes.clone();
@@ -4240,4 +4569,3 @@ impl GraphEditor {
         }
     }
 }
-

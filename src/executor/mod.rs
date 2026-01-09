@@ -1,12 +1,12 @@
 use crate::graph::{BlueprintGraph, Node, VariableValue};
 use crate::node_types::NodeType;
+use enigo::{Button, Coordinate, Direction, Enigo, Key, Keyboard, Mouse, Settings};
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use uuid::Uuid;
-use enigo::{Enigo, Mouse, Keyboard, Settings, Button, Coordinate, Direction, Key};
 use xcap::Monitor;
 
 pub struct ExecutionContext {
@@ -136,7 +136,6 @@ impl Interpreter {
                             logger(output);
                         }
 
-
                         if let Some(next) = Self::follow_flow(&graph, current_node_id, "Next") {
                             current_node_id = next;
                         } else {
@@ -231,15 +230,17 @@ impl Interpreter {
                     let mut iteration = 0;
 
                     while iteration < max_iterations {
-                        let condition = Self::evaluate_input(&graph, current_node_id, "Condition", &context)
-                            .unwrap_or(VariableValue::Boolean(false));
-                        
+                        let condition =
+                            Self::evaluate_input(&graph, current_node_id, "Condition", &context)
+                                .unwrap_or(VariableValue::Boolean(false));
+
                         if !Self::to_bool(&condition) {
                             break;
                         }
 
                         // Execute the Loop body
-                        if let Some(loop_body) = Self::follow_flow(&graph, current_node_id, "Loop") {
+                        if let Some(loop_body) = Self::follow_flow(&graph, current_node_id, "Loop")
+                        {
                             Self::execute_flow_from(
                                 graph.clone(),
                                 loop_body,
@@ -280,7 +281,7 @@ impl Interpreter {
                 NodeType::Gate => {
                     let is_open = Self::evaluate_input(&graph, current_node_id, "Open", &context)
                         .unwrap_or(VariableValue::Boolean(true));
-                    
+
                     if Self::to_bool(&is_open) {
                         if let Some(next) = Self::follow_flow(&graph, current_node_id, "Out") {
                             current_node_id = next;
@@ -295,9 +296,10 @@ impl Interpreter {
                 NodeType::FileWrite => {
                     let path = Self::evaluate_input(&graph, current_node_id, "Path", &context)
                         .unwrap_or(VariableValue::String("".into()));
-                    let content = Self::evaluate_input(&graph, current_node_id, "Content", &context)
-                        .unwrap_or(VariableValue::String("".into()));
-                    
+                    let content =
+                        Self::evaluate_input(&graph, current_node_id, "Content", &context)
+                            .unwrap_or(VariableValue::String("".into()));
+
                     let path_s = match path {
                         VariableValue::String(s) => s,
                         _ => "".to_string(),
@@ -306,7 +308,7 @@ impl Interpreter {
                         VariableValue::String(s) => s,
                         _ => "".to_string(),
                     };
-                    
+
                     match std::fs::write(&path_s, &content_s) {
                         Ok(_) => logger(format!("FileWrite: Successfully wrote to {}", path_s)),
                         Err(e) => logger(format!("FileWrite: Error writing to {}: {}", path_s, e)),
@@ -318,16 +320,16 @@ impl Interpreter {
                         break;
                     }
                 }
-                
+
                 // === Module H: Array Mutation Nodes ===
-                
                 NodeType::ArrayPush => {
-                    let var_name = Self::evaluate_input(&graph, current_node_id, "Variable", &context)
-                        .map(|v| Self::to_string(&v))
-                        .unwrap_or_default();
+                    let var_name =
+                        Self::evaluate_input(&graph, current_node_id, "Variable", &context)
+                            .map(|v| Self::to_string(&v))
+                            .unwrap_or_default();
                     let value = Self::evaluate_input(&graph, current_node_id, "Value", &context)
                         .unwrap_or(VariableValue::None);
-                    
+
                     {
                         let mut ctx = context.lock().unwrap();
                         if let Some(VariableValue::Array(arr)) = ctx.variables.get_mut(&var_name) {
@@ -335,7 +337,8 @@ impl Interpreter {
                             logger(format!("ArrayPush: Added element to '{}'", var_name));
                         } else {
                             // Create new array if variable doesn't exist or isn't an array
-                            ctx.variables.insert(var_name.clone(), VariableValue::Array(vec![value]));
+                            ctx.variables
+                                .insert(var_name.clone(), VariableValue::Array(vec![value]));
                             logger(format!("ArrayPush: Created new array '{}'", var_name));
                         }
                     }
@@ -346,12 +349,13 @@ impl Interpreter {
                         break;
                     }
                 }
-                
+
                 NodeType::ArrayPop => {
-                    let var_name = Self::evaluate_input(&graph, current_node_id, "Variable", &context)
-                        .map(|v| Self::to_string(&v))
-                        .unwrap_or_default();
-                    
+                    let var_name =
+                        Self::evaluate_input(&graph, current_node_id, "Variable", &context)
+                            .map(|v| Self::to_string(&v))
+                            .unwrap_or_default();
+
                     {
                         let mut ctx = context.lock().unwrap();
                         if let Some(VariableValue::Array(arr)) = ctx.variables.get_mut(&var_name) {
@@ -360,11 +364,13 @@ impl Interpreter {
                                 ctx.variables.insert("__array_pop_result".into(), popped);
                                 logger(format!("ArrayPop: Removed element from '{}'", var_name));
                             } else {
-                                ctx.variables.insert("__array_pop_result".into(), VariableValue::None);
+                                ctx.variables
+                                    .insert("__array_pop_result".into(), VariableValue::None);
                                 logger(format!("ArrayPop: Array '{}' is empty", var_name));
                             }
                         } else {
-                            ctx.variables.insert("__array_pop_result".into(), VariableValue::None);
+                            ctx.variables
+                                .insert("__array_pop_result".into(), VariableValue::None);
                             logger(format!("ArrayPop: Variable '{}' is not an array", var_name));
                         }
                     }
@@ -375,11 +381,12 @@ impl Interpreter {
                         break;
                     }
                 }
-                
+
                 NodeType::ArraySet => {
-                    let var_name = Self::evaluate_input(&graph, current_node_id, "Variable", &context)
-                        .map(|v| Self::to_string(&v))
-                        .unwrap_or_default();
+                    let var_name =
+                        Self::evaluate_input(&graph, current_node_id, "Variable", &context)
+                            .map(|v| Self::to_string(&v))
+                            .unwrap_or_default();
                     let index = Self::evaluate_input(&graph, current_node_id, "Index", &context)
                         .map(|v| match v {
                             VariableValue::Integer(i) => i as usize,
@@ -389,7 +396,7 @@ impl Interpreter {
                         .unwrap_or(0);
                     let value = Self::evaluate_input(&graph, current_node_id, "Value", &context)
                         .unwrap_or(VariableValue::None);
-                    
+
                     {
                         let mut ctx = context.lock().unwrap();
                         if let Some(VariableValue::Array(arr)) = ctx.variables.get_mut(&var_name) {
@@ -402,7 +409,10 @@ impl Interpreter {
                                     arr.push(VariableValue::None);
                                 }
                                 arr[index] = value;
-                                logger(format!("ArraySet: Extended '{}' and set index {}", var_name, index));
+                                logger(format!(
+                                    "ArraySet: Extended '{}' and set index {}",
+                                    var_name, index
+                                ));
                             }
                         } else {
                             logger(format!("ArraySet: Variable '{}' is not an array", var_name));
@@ -415,7 +425,7 @@ impl Interpreter {
                         break;
                     }
                 }
-                
+
                 NodeType::HTTPRequest => {
                     let url = Self::evaluate_input(&graph, current_node_id, "URL", &context)
                         .map(|v| Self::to_string(&v))
@@ -426,9 +436,9 @@ impl Interpreter {
                     let body = Self::evaluate_input(&graph, current_node_id, "Body", &context)
                         .map(|v| Self::to_string(&v))
                         .unwrap_or_default();
-                    
+
                     logger(format!("HTTPRequest: {} {}", method.to_uppercase(), url));
-                    
+
                     // Simple synchronous HTTP using std::process::Command with curl
                     // Note: For production, consider using reqwest crate with async
                     let result = if method.to_uppercase() == "POST" {
@@ -440,19 +450,32 @@ impl Interpreter {
                             .args(["-s", &url])
                             .output()
                     };
-                    
+
                     {
                         let mut ctx = context.lock().unwrap();
                         match result {
                             Ok(output) => {
                                 let response = String::from_utf8_lossy(&output.stdout).to_string();
-                                ctx.variables.insert("__http_response".into(), VariableValue::String(response.clone()));
-                                ctx.variables.insert("__http_success".into(), VariableValue::Boolean(output.status.success()));
-                                logger(format!("HTTPRequest: Response received ({} bytes)", response.len()));
+                                ctx.variables.insert(
+                                    "__http_response".into(),
+                                    VariableValue::String(response.clone()),
+                                );
+                                ctx.variables.insert(
+                                    "__http_success".into(),
+                                    VariableValue::Boolean(output.status.success()),
+                                );
+                                logger(format!(
+                                    "HTTPRequest: Response received ({} bytes)",
+                                    response.len()
+                                ));
                             }
                             Err(e) => {
-                                ctx.variables.insert("__http_response".into(), VariableValue::String("".into()));
-                                ctx.variables.insert("__http_success".into(), VariableValue::Boolean(false));
+                                ctx.variables.insert(
+                                    "__http_response".into(),
+                                    VariableValue::String("".into()),
+                                );
+                                ctx.variables
+                                    .insert("__http_success".into(), VariableValue::Boolean(false));
                                 logger(format!("HTTPRequest: Error - {}", e));
                             }
                         }
@@ -464,7 +487,7 @@ impl Interpreter {
                         break;
                     }
                 }
-                
+
                 // === Module A: Desktop Input Automation ===
                 NodeType::Click => {
                     let x = Self::evaluate_input(&graph, current_node_id, "X", &context)
@@ -481,9 +504,9 @@ impl Interpreter {
                             _ => 0,
                         })
                         .unwrap_or(0);
-                    
+
                     logger(format!("Click: ({}, {})", x, y));
-                    
+
                     match Enigo::new(&Settings::default()) {
                         Ok(mut enigo) => {
                             let _ = enigo.move_mouse(x, y, Coordinate::Abs);
@@ -498,7 +521,7 @@ impl Interpreter {
                         break;
                     }
                 }
-                
+
                 NodeType::DoubleClick => {
                     let x = Self::evaluate_input(&graph, current_node_id, "X", &context)
                         .map(|v| match v {
@@ -514,9 +537,9 @@ impl Interpreter {
                             _ => 0,
                         })
                         .unwrap_or(0);
-                    
+
                     logger(format!("DoubleClick: ({}, {})", x, y));
-                    
+
                     match Enigo::new(&Settings::default()) {
                         Ok(mut enigo) => {
                             let _ = enigo.move_mouse(x, y, Coordinate::Abs);
@@ -532,7 +555,7 @@ impl Interpreter {
                         break;
                     }
                 }
-                
+
                 NodeType::RightClick => {
                     let x = Self::evaluate_input(&graph, current_node_id, "X", &context)
                         .map(|v| match v {
@@ -548,9 +571,9 @@ impl Interpreter {
                             _ => 0,
                         })
                         .unwrap_or(0);
-                    
+
                     logger(format!("RightClick: ({}, {})", x, y));
-                    
+
                     match Enigo::new(&Settings::default()) {
                         Ok(mut enigo) => {
                             let _ = enigo.move_mouse(x, y, Coordinate::Abs);
@@ -565,7 +588,7 @@ impl Interpreter {
                         break;
                     }
                 }
-                
+
                 NodeType::MouseMove => {
                     let x = Self::evaluate_input(&graph, current_node_id, "X", &context)
                         .map(|v| match v {
@@ -581,9 +604,9 @@ impl Interpreter {
                             _ => 0,
                         })
                         .unwrap_or(0);
-                    
+
                     logger(format!("MouseMove: ({}, {})", x, y));
-                    
+
                     match Enigo::new(&Settings::default()) {
                         Ok(mut enigo) => {
                             let _ = enigo.move_mouse(x, y, Coordinate::Abs);
@@ -597,20 +620,21 @@ impl Interpreter {
                         break;
                     }
                 }
-                
+
                 NodeType::MouseDown => {
-                    let button_str = Self::evaluate_input(&graph, current_node_id, "Button", &context)
-                        .map(|v| Self::to_string(&v))
-                        .unwrap_or_else(|_| "left".to_string());
-                    
+                    let button_str =
+                        Self::evaluate_input(&graph, current_node_id, "Button", &context)
+                            .map(|v| Self::to_string(&v))
+                            .unwrap_or_else(|_| "left".to_string());
+
                     let button = match button_str.to_lowercase().as_str() {
                         "right" => Button::Right,
                         "middle" => Button::Middle,
                         _ => Button::Left,
                     };
-                    
+
                     logger(format!("MouseDown: {}", button_str));
-                    
+
                     match Enigo::new(&Settings::default()) {
                         Ok(mut enigo) => {
                             let _ = enigo.button(button, Direction::Press);
@@ -624,20 +648,21 @@ impl Interpreter {
                         break;
                     }
                 }
-                
+
                 NodeType::MouseUp => {
-                    let button_str = Self::evaluate_input(&graph, current_node_id, "Button", &context)
-                        .map(|v| Self::to_string(&v))
-                        .unwrap_or_else(|_| "left".to_string());
-                    
+                    let button_str =
+                        Self::evaluate_input(&graph, current_node_id, "Button", &context)
+                            .map(|v| Self::to_string(&v))
+                            .unwrap_or_else(|_| "left".to_string());
+
                     let button = match button_str.to_lowercase().as_str() {
                         "right" => Button::Right,
                         "middle" => Button::Middle,
                         _ => Button::Left,
                     };
-                    
+
                     logger(format!("MouseUp: {}", button_str));
-                    
+
                     match Enigo::new(&Settings::default()) {
                         Ok(mut enigo) => {
                             let _ = enigo.button(button, Direction::Release);
@@ -651,7 +676,7 @@ impl Interpreter {
                         break;
                     }
                 }
-                
+
                 NodeType::Scroll => {
                     let x = Self::evaluate_input(&graph, current_node_id, "X", &context)
                         .map(|v| match v {
@@ -667,9 +692,9 @@ impl Interpreter {
                             _ => 0,
                         })
                         .unwrap_or(-3);
-                    
+
                     logger(format!("Scroll: ({}, {})", x, y));
-                    
+
                     match Enigo::new(&Settings::default()) {
                         Ok(mut enigo) => {
                             let _ = enigo.scroll(x, enigo::Axis::Horizontal);
@@ -684,14 +709,14 @@ impl Interpreter {
                         break;
                     }
                 }
-                
+
                 NodeType::KeyPress => {
                     let key_str = Self::evaluate_input(&graph, current_node_id, "Key", &context)
                         .map(|v| Self::to_string(&v))
                         .unwrap_or_else(|_| "Return".to_string());
-                    
+
                     logger(format!("KeyPress: {}", key_str));
-                    
+
                     match Enigo::new(&Settings::default()) {
                         Ok(mut enigo) => {
                             if let Some(key) = Self::string_to_key(&key_str) {
@@ -715,14 +740,14 @@ impl Interpreter {
                         break;
                     }
                 }
-                
+
                 NodeType::KeyDown => {
                     let key_str = Self::evaluate_input(&graph, current_node_id, "Key", &context)
                         .map(|v| Self::to_string(&v))
                         .unwrap_or_else(|_| "Shift".to_string());
-                    
+
                     logger(format!("KeyDown: {}", key_str));
-                    
+
                     match Enigo::new(&Settings::default()) {
                         Ok(mut enigo) => {
                             if let Some(key) = Self::string_to_key(&key_str) {
@@ -742,14 +767,14 @@ impl Interpreter {
                         break;
                     }
                 }
-                
+
                 NodeType::KeyUp => {
                     let key_str = Self::evaluate_input(&graph, current_node_id, "Key", &context)
                         .map(|v| Self::to_string(&v))
                         .unwrap_or_else(|_| "Shift".to_string());
-                    
+
                     logger(format!("KeyUp: {}", key_str));
-                    
+
                     match Enigo::new(&Settings::default()) {
                         Ok(mut enigo) => {
                             if let Some(key) = Self::string_to_key(&key_str) {
@@ -769,14 +794,14 @@ impl Interpreter {
                         break;
                     }
                 }
-                
+
                 NodeType::TypeText => {
                     let text = Self::evaluate_input(&graph, current_node_id, "Text", &context)
                         .map(|v| Self::to_string(&v))
                         .unwrap_or_default();
-                    
+
                     logger(format!("TypeText: \"{}\"", text));
-                    
+
                     match Enigo::new(&Settings::default()) {
                         Ok(mut enigo) => {
                             let _ = enigo.text(&text);
@@ -790,7 +815,7 @@ impl Interpreter {
                         break;
                     }
                 }
-                
+
                 NodeType::HotKey => {
                     let key_str = Self::evaluate_input(&graph, current_node_id, "Key", &context)
                         .map(|v| Self::to_string(&v))
@@ -807,38 +832,62 @@ impl Interpreter {
                     let meta = Self::evaluate_input(&graph, current_node_id, "Command", &context)
                         .map(|v| Self::to_bool(&v))
                         .unwrap_or(false);
-                    
+
                     let mut modifiers = Vec::new();
-                    if ctrl { modifiers.push("Ctrl"); }
-                    if shift { modifiers.push("Shift"); }
-                    if alt { modifiers.push("Alt"); }
-                    if meta { modifiers.push("Command"); }
+                    if ctrl {
+                        modifiers.push("Ctrl");
+                    }
+                    if shift {
+                        modifiers.push("Shift");
+                    }
+                    if alt {
+                        modifiers.push("Alt");
+                    }
+                    if meta {
+                        modifiers.push("Command");
+                    }
                     logger(format!("HotKey: {}+{}", modifiers.join("+"), key_str));
-                    
+
                     match Enigo::new(&Settings::default()) {
                         Ok(mut enigo) => {
                             // Press modifiers
-                            if ctrl { let _ = enigo.key(Key::Control, Direction::Press); }
-                            if shift { let _ = enigo.key(Key::Shift, Direction::Press); }
-                            if alt { let _ = enigo.key(Key::Alt, Direction::Press); }
-                            if meta { let _ = enigo.key(Key::Meta, Direction::Press); }
-                            
+                            if ctrl {
+                                let _ = enigo.key(Key::Control, Direction::Press);
+                            }
+                            if shift {
+                                let _ = enigo.key(Key::Shift, Direction::Press);
+                            }
+                            if alt {
+                                let _ = enigo.key(Key::Alt, Direction::Press);
+                            }
+                            if meta {
+                                let _ = enigo.key(Key::Meta, Direction::Press);
+                            }
+
                             thread::sleep(Duration::from_millis(100)); // Delay for modifiers to register
-                            
+
                             // Press the main key
                             if let Some(key) = Self::string_to_key(&key_str) {
                                 let _ = enigo.key(key, Direction::Click);
                             } else if let Some(c) = key_str.chars().next() {
                                 let _ = enigo.key(Key::Unicode(c), Direction::Click);
                             }
-                            
-                             thread::sleep(Duration::from_millis(50)); // Delay after click
-                            
+
+                            thread::sleep(Duration::from_millis(50)); // Delay after click
+
                             // Release modifiers (in reverse order)
-                            if meta { let _ = enigo.key(Key::Meta, Direction::Release); }
-                            if alt { let _ = enigo.key(Key::Alt, Direction::Release); }
-                            if shift { let _ = enigo.key(Key::Shift, Direction::Release); }
-                            if ctrl { let _ = enigo.key(Key::Control, Direction::Release); }
+                            if meta {
+                                let _ = enigo.key(Key::Meta, Direction::Release);
+                            }
+                            if alt {
+                                let _ = enigo.key(Key::Alt, Direction::Release);
+                            }
+                            if shift {
+                                let _ = enigo.key(Key::Shift, Direction::Release);
+                            }
+                            if ctrl {
+                                let _ = enigo.key(Key::Control, Direction::Release);
+                            }
                         }
                         Err(e) => logger(format!("HotKey Error: {}", e)),
                     }
@@ -849,10 +898,8 @@ impl Interpreter {
                         break;
                     }
                 }
-                
-                
+
                 // === Module G: System Control ===
-                
                 NodeType::RunCommand => {
                     let cmd = Self::evaluate_input(&graph, current_node_id, "Command", &context)
                         .map(|v| Self::to_string(&v))
@@ -860,29 +907,41 @@ impl Interpreter {
                     let args_str = Self::evaluate_input(&graph, current_node_id, "Args", &context)
                         .map(|v| Self::to_string(&v))
                         .unwrap_or_default();
-                    
+
                     logger(format!("RunCommand: {} {}", cmd, args_str));
-                    
+
                     let args: Vec<&str> = args_str.split_whitespace().collect();
-                    
+
                     match std::process::Command::new(&cmd).args(&args).output() {
                         Ok(output) => {
                             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                             // let stderr = String::from_utf8_lossy(&output.stderr).to_string();
                             let exit_code = output.status.code().unwrap_or(0) as i64;
                             let success = output.status.success();
-                            
+
                             let mut ctx = context.lock().unwrap();
                             let node_id_str = current_node_id.to_string();
-                            ctx.variables.insert(format!("__out_{}_Output", node_id_str), VariableValue::String(stdout));
-                            ctx.variables.insert(format!("__out_{}_ExitCode", node_id_str), VariableValue::Integer(exit_code));
-                            ctx.variables.insert(format!("__out_{}_Success", node_id_str), VariableValue::Boolean(success));
+                            ctx.variables.insert(
+                                format!("__out_{}_Output", node_id_str),
+                                VariableValue::String(stdout),
+                            );
+                            ctx.variables.insert(
+                                format!("__out_{}_ExitCode", node_id_str),
+                                VariableValue::Integer(exit_code),
+                            );
+                            ctx.variables.insert(
+                                format!("__out_{}_Success", node_id_str),
+                                VariableValue::Boolean(success),
+                            );
                         }
                         Err(e) => {
                             logger(format!("RunCommand Error: {}", e));
                             let mut ctx = context.lock().unwrap();
                             let node_id_str = current_node_id.to_string();
-                            ctx.variables.insert(format!("__out_{}_Success", node_id_str), VariableValue::Boolean(false));
+                            ctx.variables.insert(
+                                format!("__out_{}_Success", node_id_str),
+                                VariableValue::Boolean(false),
+                            );
                         }
                     }
 
@@ -892,7 +951,7 @@ impl Interpreter {
                         break;
                     }
                 }
-                
+
                 NodeType::LaunchApp => {
                     let path = Self::evaluate_input(&graph, current_node_id, "Path", &context)
                         .map(|v| Self::to_string(&v))
@@ -900,29 +959,47 @@ impl Interpreter {
                     let args_str = Self::evaluate_input(&graph, current_node_id, "Args", &context)
                         .map(|v| Self::to_string(&v))
                         .unwrap_or_default();
-                    
+
                     logger(format!("LaunchApp: {}", path));
-                    
+
                     let args: Vec<&str> = args_str.split_whitespace().collect();
-                    
+
                     #[cfg(target_os = "macos")]
-                    let result = std::process::Command::new("open").arg(&path).args(&args).spawn();
+                    let result = std::process::Command::new("open")
+                        .arg(&path)
+                        .args(&args)
+                        .spawn();
                     #[cfg(target_os = "windows")]
-                    let result = std::process::Command::new("cmd").arg("/C").arg("start").arg(&path).args(&args).spawn();
+                    let result = std::process::Command::new("cmd")
+                        .arg("/C")
+                        .arg("start")
+                        .arg(&path)
+                        .args(&args)
+                        .spawn();
                     #[cfg(target_os = "linux")]
-                    let result = std::process::Command::new("xdg-open").arg(&path).args(&args).spawn();
-                    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+                    let result = std::process::Command::new("xdg-open")
+                        .arg(&path)
+                        .args(&args)
+                        .spawn();
+                    #[cfg(not(any(
+                        target_os = "macos",
+                        target_os = "windows",
+                        target_os = "linux"
+                    )))]
                     let result = std::process::Command::new(&path).args(&args).spawn();
 
                     let success = result.is_ok();
                     if let Err(e) = result {
                         logger(format!("LaunchApp Error: {}", e));
                     }
-                    
+
                     {
                         let mut ctx = context.lock().unwrap();
                         let node_id_str = current_node_id.to_string();
-                        ctx.variables.insert(format!("__out_{}_Success", node_id_str), VariableValue::Boolean(success));
+                        ctx.variables.insert(
+                            format!("__out_{}_Success", node_id_str),
+                            VariableValue::Boolean(success),
+                        );
                     }
 
                     if let Some(next) = Self::follow_flow(&graph, current_node_id, "Next") {
@@ -931,25 +1008,33 @@ impl Interpreter {
                         break;
                     }
                 }
-                
+
                 NodeType::CloseApp => {
                     let name = Self::evaluate_input(&graph, current_node_id, "Name", &context)
                         .map(|v| Self::to_string(&v))
                         .unwrap_or_default();
-                    
+
                     logger(format!("CloseApp: {}", name));
-                    
+
                     #[cfg(target_os = "windows")]
-                    let result = std::process::Command::new("taskkill").args(["/IM", &name, "/F"]).output();
+                    let result = std::process::Command::new("taskkill")
+                        .args(["/IM", &name, "/F"])
+                        .output();
                     #[cfg(not(target_os = "windows"))]
-                    let result = std::process::Command::new("pkill").arg("-x").arg(&name).output();
+                    let result = std::process::Command::new("pkill")
+                        .arg("-x")
+                        .arg(&name)
+                        .output();
 
                     let success = result.is_ok() && result.unwrap().status.success();
-                    
+
                     {
                         let mut ctx = context.lock().unwrap();
                         let node_id_str = current_node_id.to_string();
-                        ctx.variables.insert(format!("__out_{}_Success", node_id_str), VariableValue::Boolean(success));
+                        ctx.variables.insert(
+                            format!("__out_{}_Success", node_id_str),
+                            VariableValue::Boolean(success),
+                        );
                     }
 
                     if let Some(next) = Self::follow_flow(&graph, current_node_id, "Next") {
@@ -958,14 +1043,14 @@ impl Interpreter {
                         break;
                     }
                 }
-                
+
                 NodeType::FocusWindow => {
                     let title = Self::evaluate_input(&graph, current_node_id, "Title", &context)
                         .map(|v| Self::to_string(&v))
                         .unwrap_or_default();
-                     
+
                     logger(format!("FocusWindow: {}", title));
-                    
+
                     // Platform-specific implementation
                     #[cfg(target_os = "macos")]
                     let success = {
@@ -1006,14 +1091,14 @@ impl Interpreter {
                             }
                         }
                     };
-                    
+
                     #[cfg(target_os = "windows")]
                     let success = {
                         // Windows: Use PowerShell to find and focus window
                         logger(format!("FocusWindow (Windows stub): {}", title));
                         true // Stub for Windows
                     };
-                    
+
                     #[cfg(target_os = "linux")]
                     let success = {
                         // Linux: Use wmctrl or xdotool
@@ -1022,14 +1107,21 @@ impl Interpreter {
                             .output();
                         result.map(|o| o.status.success()).unwrap_or(false)
                     };
-                    
-                    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+
+                    #[cfg(not(any(
+                        target_os = "macos",
+                        target_os = "windows",
+                        target_os = "linux"
+                    )))]
                     let success = false;
-                    
+
                     {
                         let mut ctx = context.lock().unwrap();
                         let node_id_str = current_node_id.to_string();
-                        ctx.variables.insert(format!("__out_{}_Success", node_id_str), VariableValue::Boolean(success));
+                        ctx.variables.insert(
+                            format!("__out_{}_Success", node_id_str),
+                            VariableValue::Boolean(success),
+                        );
                     }
 
                     if let Some(next) = Self::follow_flow(&graph, current_node_id, "Next") {
@@ -1038,18 +1130,29 @@ impl Interpreter {
                         break;
                     }
                 }
-                
+
                 NodeType::SetWindowPosition => {
                     let title = Self::evaluate_input(&graph, current_node_id, "Title", &context)
                         .map(|v| Self::to_string(&v))
                         .unwrap_or_default();
-                    let x = Self::evaluate_input(&graph, current_node_id, "X", &context).map(|v| Self::to_float(&v) as i32).unwrap_or(0);
-                    let y = Self::evaluate_input(&graph, current_node_id, "Y", &context).map(|v| Self::to_float(&v) as i32).unwrap_or(0);
-                    let w = Self::evaluate_input(&graph, current_node_id, "Width", &context).map(|v| Self::to_float(&v) as i32).unwrap_or(800);
-                    let h = Self::evaluate_input(&graph, current_node_id, "Height", &context).map(|v| Self::to_float(&v) as i32).unwrap_or(600);
-                    
-                    logger(format!("SetWindowPosition: '{}' -> {},{}, {}x{}", title, x, y, w, h));
-                    
+                    let x = Self::evaluate_input(&graph, current_node_id, "X", &context)
+                        .map(|v| Self::to_float(&v) as i32)
+                        .unwrap_or(0);
+                    let y = Self::evaluate_input(&graph, current_node_id, "Y", &context)
+                        .map(|v| Self::to_float(&v) as i32)
+                        .unwrap_or(0);
+                    let w = Self::evaluate_input(&graph, current_node_id, "Width", &context)
+                        .map(|v| Self::to_float(&v) as i32)
+                        .unwrap_or(800);
+                    let h = Self::evaluate_input(&graph, current_node_id, "Height", &context)
+                        .map(|v| Self::to_float(&v) as i32)
+                        .unwrap_or(600);
+
+                    logger(format!(
+                        "SetWindowPosition: '{}' -> {},{}, {}x{}",
+                        title, x, y, w, h
+                    ));
+
                     // Platform-specific implementation
                     #[cfg(target_os = "macos")]
                     let success = {
@@ -1094,13 +1197,16 @@ impl Interpreter {
                             }
                         }
                     };
-                    
+
                     #[cfg(target_os = "windows")]
                     let success = {
-                        logger(format!("SetWindowPosition (Windows stub): {} -> {},{},{}x{}", title, x, y, w, h));
+                        logger(format!(
+                            "SetWindowPosition (Windows stub): {} -> {},{},{}x{}",
+                            title, x, y, w, h
+                        ));
                         true // Stub for Windows
                     };
-                    
+
                     #[cfg(target_os = "linux")]
                     let success = {
                         // Linux: Use wmctrl to move window
@@ -1109,14 +1215,21 @@ impl Interpreter {
                             .output();
                         result.map(|o| o.status.success()).unwrap_or(false)
                     };
-                    
-                    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+
+                    #[cfg(not(any(
+                        target_os = "macos",
+                        target_os = "windows",
+                        target_os = "linux"
+                    )))]
                     let success = false;
-                    
+
                     {
                         let mut ctx = context.lock().unwrap();
                         let node_id_str = current_node_id.to_string();
-                        ctx.variables.insert(format!("__out_{}_Success", node_id_str), VariableValue::Boolean(success));
+                        ctx.variables.insert(
+                            format!("__out_{}_Success", node_id_str),
+                            VariableValue::Boolean(success),
+                        );
                     }
 
                     if let Some(next) = Self::follow_flow(&graph, current_node_id, "Next") {
@@ -1125,38 +1238,48 @@ impl Interpreter {
                         break;
                     }
                 }
-                
+
                 // === Module C: Screenshot & Image Tools ===
-                
                 NodeType::ScreenCapture => {
-                    let display_index = Self::evaluate_input(&graph, current_node_id, "Display", &context)
-                        .map(|v| match v {
-                            VariableValue::Integer(i) => i as usize,
-                            VariableValue::Float(f) => f as usize,
-                            _ => 0,
-                        })
-                        .unwrap_or(0);
-                    
+                    let display_index =
+                        Self::evaluate_input(&graph, current_node_id, "Display", &context)
+                            .map(|v| match v {
+                                VariableValue::Integer(i) => i as usize,
+                                VariableValue::Float(f) => f as usize,
+                                _ => 0,
+                            })
+                            .unwrap_or(0);
+
                     logger(format!("ScreenCapture: Display {}", display_index));
-                    
+
                     // Ensure screenshots directory exists
                     let _ = std::fs::create_dir_all("scripts/screenshots");
-                    
+
                     // Capture screen using xcap
                     let (success, image_path) = match Monitor::all() {
                         Ok(monitors) => {
                             if let Some(monitor) = monitors.get(display_index) {
                                 match monitor.capture_image() {
                                     Ok(image) => {
-                                        let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S_%3f");
-                                        let filename = format!("scripts/screenshots/capture_{}.png", timestamp);
+                                        let timestamp =
+                                            chrono::Local::now().format("%Y%m%d_%H%M%S_%3f");
+                                        let filename = format!(
+                                            "scripts/screenshots/capture_{}.png",
+                                            timestamp
+                                        );
                                         match image.save(&filename) {
                                             Ok(_) => {
-                                                logger(format!("ScreenCapture: Saved to {}", filename));
+                                                logger(format!(
+                                                    "ScreenCapture: Saved to {}",
+                                                    filename
+                                                ));
                                                 (true, filename)
                                             }
                                             Err(e) => {
-                                                logger(format!("ScreenCapture: Save error - {}", e));
+                                                logger(format!(
+                                                    "ScreenCapture: Save error - {}",
+                                                    e
+                                                ));
                                                 (false, String::new())
                                             }
                                         }
@@ -1167,8 +1290,11 @@ impl Interpreter {
                                     }
                                 }
                             } else {
-                                logger(format!("ScreenCapture: Display {} not found, only {} displays available", 
-                                    display_index, monitors.len()));
+                                logger(format!(
+                                    "ScreenCapture: Display {} not found, only {} displays available",
+                                    display_index,
+                                    monitors.len()
+                                ));
                                 (false, String::new())
                             }
                         }
@@ -1177,12 +1303,18 @@ impl Interpreter {
                             (false, String::new())
                         }
                     };
-                    
+
                     {
                         let mut ctx = context.lock().unwrap();
                         let node_id_str = current_node_id.to_string();
-                        ctx.variables.insert(format!("__out_{}_ImagePath", node_id_str), VariableValue::String(image_path));
-                        ctx.variables.insert(format!("__out_{}_Success", node_id_str), VariableValue::Boolean(success));
+                        ctx.variables.insert(
+                            format!("__out_{}_ImagePath", node_id_str),
+                            VariableValue::String(image_path),
+                        );
+                        ctx.variables.insert(
+                            format!("__out_{}_Success", node_id_str),
+                            VariableValue::Boolean(success),
+                        );
                     }
 
                     if let Some(next) = Self::follow_flow(&graph, current_node_id, "Next") {
@@ -1191,22 +1323,24 @@ impl Interpreter {
                         break;
                     }
                 }
-                
+
                 NodeType::SaveScreenshot => {
-                    let image_path = Self::evaluate_input(&graph, current_node_id, "ImagePath", &context)
-                        .map(|v| Self::to_string(&v))
-                        .unwrap_or_default();
-                    let filename = Self::evaluate_input(&graph, current_node_id, "Filename", &context)
-                        .map(|v| Self::to_string(&v))
-                        .unwrap_or_else(|_| "screenshot.png".to_string());
-                    
+                    let image_path =
+                        Self::evaluate_input(&graph, current_node_id, "ImagePath", &context)
+                            .map(|v| Self::to_string(&v))
+                            .unwrap_or_default();
+                    let filename =
+                        Self::evaluate_input(&graph, current_node_id, "Filename", &context)
+                            .map(|v| Self::to_string(&v))
+                            .unwrap_or_else(|_| "screenshot.png".to_string());
+
                     logger(format!("SaveScreenshot: {} -> {}", image_path, filename));
-                    
+
                     // Ensure target directory exists
                     if let Some(parent) = std::path::Path::new(&filename).parent() {
                         let _ = std::fs::create_dir_all(parent);
                     }
-                    
+
                     let (success, saved_path) = if !image_path.is_empty() {
                         match std::fs::copy(&image_path, &filename) {
                             Ok(_) => {
@@ -1222,12 +1356,18 @@ impl Interpreter {
                         logger("SaveScreenshot: No image path provided".to_string());
                         (false, String::new())
                     };
-                    
+
                     {
                         let mut ctx = context.lock().unwrap();
                         let node_id_str = current_node_id.to_string();
-                        ctx.variables.insert(format!("__out_{}_SavedPath", node_id_str), VariableValue::String(saved_path));
-                        ctx.variables.insert(format!("__out_{}_Success", node_id_str), VariableValue::Boolean(success));
+                        ctx.variables.insert(
+                            format!("__out_{}_SavedPath", node_id_str),
+                            VariableValue::String(saved_path),
+                        );
+                        ctx.variables.insert(
+                            format!("__out_{}_Success", node_id_str),
+                            VariableValue::Boolean(success),
+                        );
                     }
 
                     if let Some(next) = Self::follow_flow(&graph, current_node_id, "Next") {
@@ -1236,9 +1376,8 @@ impl Interpreter {
                         break;
                     }
                 }
-                
+
                 // === Module D: Image Recognition ===
-                
                 NodeType::GetPixelColor => {
                     let x = Self::evaluate_input(&graph, current_node_id, "X", &context)
                         .map(|v| match v {
@@ -1254,9 +1393,9 @@ impl Interpreter {
                             _ => 0,
                         })
                         .unwrap_or(0);
-                    
+
                     logger(format!("GetPixelColor: ({}, {})", x, y));
-                    
+
                     // Capture screen and get pixel color
                     let (r, g, b, success) = match xcap::Monitor::all() {
                         Ok(monitors) => {
@@ -1265,9 +1404,16 @@ impl Interpreter {
                                     Ok(img) => {
                                         if x < img.width() && y < img.height() {
                                             let pixel = img.get_pixel(x, y);
-                                            (pixel[0] as i64, pixel[1] as i64, pixel[2] as i64, true)
+                                            (
+                                                pixel[0] as i64,
+                                                pixel[1] as i64,
+                                                pixel[2] as i64,
+                                                true,
+                                            )
                                         } else {
-                                            logger(format!("GetPixelColor: Coordinates out of bounds"));
+                                            logger(format!(
+                                                "GetPixelColor: Coordinates out of bounds"
+                                            ));
                                             (0, 0, 0, false)
                                         }
                                     }
@@ -1286,14 +1432,26 @@ impl Interpreter {
                             (0, 0, 0, false)
                         }
                     };
-                    
+
                     {
                         let mut ctx = context.lock().unwrap();
                         let node_id_str = current_node_id.to_string();
-                        ctx.variables.insert(format!("__out_{}_R", node_id_str), VariableValue::Integer(r));
-                        ctx.variables.insert(format!("__out_{}_G", node_id_str), VariableValue::Integer(g));
-                        ctx.variables.insert(format!("__out_{}_B", node_id_str), VariableValue::Integer(b));
-                        ctx.variables.insert(format!("__out_{}_Success", node_id_str), VariableValue::Boolean(success));
+                        ctx.variables.insert(
+                            format!("__out_{}_R", node_id_str),
+                            VariableValue::Integer(r),
+                        );
+                        ctx.variables.insert(
+                            format!("__out_{}_G", node_id_str),
+                            VariableValue::Integer(g),
+                        );
+                        ctx.variables.insert(
+                            format!("__out_{}_B", node_id_str),
+                            VariableValue::Integer(b),
+                        );
+                        ctx.variables.insert(
+                            format!("__out_{}_Success", node_id_str),
+                            VariableValue::Boolean(success),
+                        );
                     }
 
                     if let Some(next) = Self::follow_flow(&graph, current_node_id, "Next") {
@@ -1302,28 +1460,50 @@ impl Interpreter {
                         break;
                     }
                 }
-                
+
                 NodeType::FindColor => {
                     let target_r = Self::evaluate_input(&graph, current_node_id, "R", &context)
-                        .map(|v| Self::to_float(&v) as u8).unwrap_or(255);
+                        .map(|v| Self::to_float(&v) as u8)
+                        .unwrap_or(255);
                     let target_g = Self::evaluate_input(&graph, current_node_id, "G", &context)
-                        .map(|v| Self::to_float(&v) as u8).unwrap_or(0);
+                        .map(|v| Self::to_float(&v) as u8)
+                        .unwrap_or(0);
                     let target_b = Self::evaluate_input(&graph, current_node_id, "B", &context)
-                        .map(|v| Self::to_float(&v) as u8).unwrap_or(0);
-                    let tolerance = Self::evaluate_input(&graph, current_node_id, "Tolerance", &context)
-                        .map(|v| Self::to_float(&v) as i32).unwrap_or(10);
-                    let region_x = Self::evaluate_input(&graph, current_node_id, "RegionX", &context)
-                        .map(|v| Self::to_float(&v) as u32).unwrap_or(0);
-                    let region_y = Self::evaluate_input(&graph, current_node_id, "RegionY", &context)
-                        .map(|v| Self::to_float(&v) as u32).unwrap_or(0);
-                    let region_w = Self::evaluate_input(&graph, current_node_id, "RegionW", &context)
-                        .map(|v| Self::to_float(&v) as u32).unwrap_or(1920);
-                    let region_h = Self::evaluate_input(&graph, current_node_id, "RegionH", &context)
-                        .map(|v| Self::to_float(&v) as u32).unwrap_or(1080);
-                    
-                    logger(format!("FindColor: RGB({},{},{}) tolerance={} in region ({},{})x{}x{}", 
-                        target_r, target_g, target_b, tolerance, region_x, region_y, region_w, region_h));
-                    
+                        .map(|v| Self::to_float(&v) as u8)
+                        .unwrap_or(0);
+                    let tolerance =
+                        Self::evaluate_input(&graph, current_node_id, "Tolerance", &context)
+                            .map(|v| Self::to_float(&v) as i32)
+                            .unwrap_or(10);
+                    let region_x =
+                        Self::evaluate_input(&graph, current_node_id, "RegionX", &context)
+                            .map(|v| Self::to_float(&v) as u32)
+                            .unwrap_or(0);
+                    let region_y =
+                        Self::evaluate_input(&graph, current_node_id, "RegionY", &context)
+                            .map(|v| Self::to_float(&v) as u32)
+                            .unwrap_or(0);
+                    let region_w =
+                        Self::evaluate_input(&graph, current_node_id, "RegionW", &context)
+                            .map(|v| Self::to_float(&v) as u32)
+                            .unwrap_or(1920);
+                    let region_h =
+                        Self::evaluate_input(&graph, current_node_id, "RegionH", &context)
+                            .map(|v| Self::to_float(&v) as u32)
+                            .unwrap_or(1080);
+
+                    logger(format!(
+                        "FindColor: RGB({},{},{}) tolerance={} in region ({},{})x{}x{}",
+                        target_r,
+                        target_g,
+                        target_b,
+                        tolerance,
+                        region_x,
+                        region_y,
+                        region_w,
+                        region_h
+                    ));
+
                     let (found_x, found_y, found) = match xcap::Monitor::all() {
                         Ok(monitors) => {
                             if let Some(monitor) = monitors.first() {
@@ -1332,14 +1512,17 @@ impl Interpreter {
                                         let mut result = (0i64, 0i64, false);
                                         let end_x = (region_x + region_w).min(img.width());
                                         let end_y = (region_y + region_h).min(img.height());
-                                        
+
                                         'outer: for py in region_y..end_y {
                                             for px in region_x..end_x {
                                                 let pixel = img.get_pixel(px, py);
                                                 let dr = (pixel[0] as i32 - target_r as i32).abs();
                                                 let dg = (pixel[1] as i32 - target_g as i32).abs();
                                                 let db = (pixel[2] as i32 - target_b as i32).abs();
-                                                if dr <= tolerance && dg <= tolerance && db <= tolerance {
+                                                if dr <= tolerance
+                                                    && dg <= tolerance
+                                                    && db <= tolerance
+                                                {
                                                     result = (px as i64, py as i64, true);
                                                     break 'outer;
                                                 }
@@ -1361,15 +1544,27 @@ impl Interpreter {
                             (0, 0, false)
                         }
                     };
-                    
-                    logger(format!("FindColor: Found={} at ({},{})", found, found_x, found_y));
-                    
+
+                    logger(format!(
+                        "FindColor: Found={} at ({},{})",
+                        found, found_x, found_y
+                    ));
+
                     {
                         let mut ctx = context.lock().unwrap();
                         let node_id_str = current_node_id.to_string();
-                        ctx.variables.insert(format!("__out_{}_X", node_id_str), VariableValue::Integer(found_x));
-                        ctx.variables.insert(format!("__out_{}_Y", node_id_str), VariableValue::Integer(found_y));
-                        ctx.variables.insert(format!("__out_{}_Found", node_id_str), VariableValue::Boolean(found));
+                        ctx.variables.insert(
+                            format!("__out_{}_X", node_id_str),
+                            VariableValue::Integer(found_x),
+                        );
+                        ctx.variables.insert(
+                            format!("__out_{}_Y", node_id_str),
+                            VariableValue::Integer(found_y),
+                        );
+                        ctx.variables.insert(
+                            format!("__out_{}_Found", node_id_str),
+                            VariableValue::Boolean(found),
+                        );
                     }
 
                     if let Some(next) = Self::follow_flow(&graph, current_node_id, "Next") {
@@ -1378,29 +1573,40 @@ impl Interpreter {
                         break;
                     }
                 }
-                
+
                 NodeType::WaitForColor => {
                     let target_r = Self::evaluate_input(&graph, current_node_id, "R", &context)
-                        .map(|v| Self::to_float(&v) as u8).unwrap_or(255);
+                        .map(|v| Self::to_float(&v) as u8)
+                        .unwrap_or(255);
                     let target_g = Self::evaluate_input(&graph, current_node_id, "G", &context)
-                        .map(|v| Self::to_float(&v) as u8).unwrap_or(0);
+                        .map(|v| Self::to_float(&v) as u8)
+                        .unwrap_or(0);
                     let target_b = Self::evaluate_input(&graph, current_node_id, "B", &context)
-                        .map(|v| Self::to_float(&v) as u8).unwrap_or(0);
+                        .map(|v| Self::to_float(&v) as u8)
+                        .unwrap_or(0);
                     let x = Self::evaluate_input(&graph, current_node_id, "X", &context)
-                        .map(|v| Self::to_float(&v) as u32).unwrap_or(0);
+                        .map(|v| Self::to_float(&v) as u32)
+                        .unwrap_or(0);
                     let y = Self::evaluate_input(&graph, current_node_id, "Y", &context)
-                        .map(|v| Self::to_float(&v) as u32).unwrap_or(0);
-                    let tolerance = Self::evaluate_input(&graph, current_node_id, "Tolerance", &context)
-                        .map(|v| Self::to_float(&v) as i32).unwrap_or(10);
-                    let timeout_ms = Self::evaluate_input(&graph, current_node_id, "Timeout", &context)
-                        .map(|v| Self::to_float(&v) as u64).unwrap_or(5000);
-                    
-                    logger(format!("WaitForColor: RGB({},{},{}) at ({},{}) tolerance={} timeout={}ms", 
-                        target_r, target_g, target_b, x, y, tolerance, timeout_ms));
-                    
+                        .map(|v| Self::to_float(&v) as u32)
+                        .unwrap_or(0);
+                    let tolerance =
+                        Self::evaluate_input(&graph, current_node_id, "Tolerance", &context)
+                            .map(|v| Self::to_float(&v) as i32)
+                            .unwrap_or(10);
+                    let timeout_ms =
+                        Self::evaluate_input(&graph, current_node_id, "Timeout", &context)
+                            .map(|v| Self::to_float(&v) as u64)
+                            .unwrap_or(5000);
+
+                    logger(format!(
+                        "WaitForColor: RGB({},{},{}) at ({},{}) tolerance={} timeout={}ms",
+                        target_r, target_g, target_b, x, y, tolerance, timeout_ms
+                    ));
+
                     let start = std::time::Instant::now();
                     let mut found = false;
-                    
+
                     while start.elapsed().as_millis() < timeout_ms as u128 {
                         if let Ok(monitors) = xcap::Monitor::all() {
                             if let Some(monitor) = monitors.first() {
@@ -1420,13 +1626,16 @@ impl Interpreter {
                         }
                         thread::sleep(Duration::from_millis(100)); // Poll every 100ms
                     }
-                    
+
                     logger(format!("WaitForColor: Found={}", found));
-                    
+
                     {
                         let mut ctx = context.lock().unwrap();
                         let node_id_str = current_node_id.to_string();
-                        ctx.variables.insert(format!("__out_{}_Found", node_id_str), VariableValue::Boolean(found));
+                        ctx.variables.insert(
+                            format!("__out_{}_Found", node_id_str),
+                            VariableValue::Boolean(found),
+                        );
                     }
 
                     if let Some(next) = Self::follow_flow(&graph, current_node_id, "Next") {
@@ -1435,25 +1644,38 @@ impl Interpreter {
                         break;
                     }
                 }
-                
+
                 NodeType::FindImage => {
-                    let image_path = Self::evaluate_input(&graph, current_node_id, "ImagePath", &context)
-                        .map(|v| Self::to_string(&v))
-                        .unwrap_or_default();
-                    let tolerance = Self::evaluate_input(&graph, current_node_id, "Tolerance", &context)
-                        .map(|v| Self::to_float(&v) as i32).unwrap_or(10);
-                    let region_x = Self::evaluate_input(&graph, current_node_id, "RegionX", &context)
-                        .map(|v| Self::to_float(&v) as u32).unwrap_or(0);
-                    let region_y = Self::evaluate_input(&graph, current_node_id, "RegionY", &context)
-                        .map(|v| Self::to_float(&v) as u32).unwrap_or(0);
-                    let region_w = Self::evaluate_input(&graph, current_node_id, "RegionW", &context)
-                        .map(|v| Self::to_float(&v) as u32).unwrap_or(1920);
-                    let region_h = Self::evaluate_input(&graph, current_node_id, "RegionH", &context)
-                        .map(|v| Self::to_float(&v) as u32).unwrap_or(1080);
-                    
-                    logger(format!("FindImage: {} tolerance={} in region ({},{})x{}x{}", 
-                        image_path, tolerance, region_x, region_y, region_w, region_h));
-                    
+                    let image_path =
+                        Self::evaluate_input(&graph, current_node_id, "ImagePath", &context)
+                            .map(|v| Self::to_string(&v))
+                            .unwrap_or_default();
+                    let tolerance =
+                        Self::evaluate_input(&graph, current_node_id, "Tolerance", &context)
+                            .map(|v| Self::to_float(&v) as i32)
+                            .unwrap_or(10);
+                    let region_x =
+                        Self::evaluate_input(&graph, current_node_id, "RegionX", &context)
+                            .map(|v| Self::to_float(&v) as u32)
+                            .unwrap_or(0);
+                    let region_y =
+                        Self::evaluate_input(&graph, current_node_id, "RegionY", &context)
+                            .map(|v| Self::to_float(&v) as u32)
+                            .unwrap_or(0);
+                    let region_w =
+                        Self::evaluate_input(&graph, current_node_id, "RegionW", &context)
+                            .map(|v| Self::to_float(&v) as u32)
+                            .unwrap_or(1920);
+                    let region_h =
+                        Self::evaluate_input(&graph, current_node_id, "RegionH", &context)
+                            .map(|v| Self::to_float(&v) as u32)
+                            .unwrap_or(1080);
+
+                    logger(format!(
+                        "FindImage: {} tolerance={} in region ({},{})x{}x{}",
+                        image_path, tolerance, region_x, region_y, region_w, region_h
+                    ));
+
                     let (found_x, found_y, found) = match image::open(&image_path) {
                         Ok(template) => {
                             let template = template.to_rgba8();
@@ -1461,12 +1683,10 @@ impl Interpreter {
                                 Ok(monitors) => {
                                     if let Some(monitor) = monitors.first() {
                                         match monitor.capture_image() {
-                                            Ok(screen) => {
-                                                Self::find_template_in_image(
-                                                    &screen, &template, tolerance,
-                                                    region_x, region_y, region_w, region_h
-                                                )
-                                            }
+                                            Ok(screen) => Self::find_template_in_image(
+                                                &screen, &template, tolerance, region_x, region_y,
+                                                region_w, region_h,
+                                            ),
                                             Err(e) => {
                                                 logger(format!("FindImage: Capture error - {}", e));
                                                 (0, 0, false)
@@ -1487,15 +1707,27 @@ impl Interpreter {
                             (0, 0, false)
                         }
                     };
-                    
-                    logger(format!("FindImage: Found={} at ({},{})", found, found_x, found_y));
-                    
+
+                    logger(format!(
+                        "FindImage: Found={} at ({},{})",
+                        found, found_x, found_y
+                    ));
+
                     {
                         let mut ctx = context.lock().unwrap();
                         let node_id_str = current_node_id.to_string();
-                        ctx.variables.insert(format!("__out_{}_X", node_id_str), VariableValue::Integer(found_x));
-                        ctx.variables.insert(format!("__out_{}_Y", node_id_str), VariableValue::Integer(found_y));
-                        ctx.variables.insert(format!("__out_{}_Found", node_id_str), VariableValue::Boolean(found));
+                        ctx.variables.insert(
+                            format!("__out_{}_X", node_id_str),
+                            VariableValue::Integer(found_x),
+                        );
+                        ctx.variables.insert(
+                            format!("__out_{}_Y", node_id_str),
+                            VariableValue::Integer(found_y),
+                        );
+                        ctx.variables.insert(
+                            format!("__out_{}_Found", node_id_str),
+                            VariableValue::Boolean(found),
+                        );
                     }
 
                     if let Some(next) = Self::follow_flow(&graph, current_node_id, "Next") {
@@ -1504,32 +1736,44 @@ impl Interpreter {
                         break;
                     }
                 }
-                
+
                 NodeType::WaitForImage => {
-                    let image_path = Self::evaluate_input(&graph, current_node_id, "ImagePath", &context)
-                        .map(|v| Self::to_string(&v))
-                        .unwrap_or_default();
-                    let tolerance = Self::evaluate_input(&graph, current_node_id, "Tolerance", &context)
-                        .map(|v| Self::to_float(&v) as i32).unwrap_or(10);
-                    let timeout_ms = Self::evaluate_input(&graph, current_node_id, "Timeout", &context)
-                        .map(|v| Self::to_float(&v) as u64).unwrap_or(5000);
-                    
-                    logger(format!("WaitForImage: {} tolerance={} timeout={}ms", 
-                        image_path, tolerance, timeout_ms));
-                    
+                    let image_path =
+                        Self::evaluate_input(&graph, current_node_id, "ImagePath", &context)
+                            .map(|v| Self::to_string(&v))
+                            .unwrap_or_default();
+                    let tolerance =
+                        Self::evaluate_input(&graph, current_node_id, "Tolerance", &context)
+                            .map(|v| Self::to_float(&v) as i32)
+                            .unwrap_or(10);
+                    let timeout_ms =
+                        Self::evaluate_input(&graph, current_node_id, "Timeout", &context)
+                            .map(|v| Self::to_float(&v) as u64)
+                            .unwrap_or(5000);
+
+                    logger(format!(
+                        "WaitForImage: {} tolerance={} timeout={}ms",
+                        image_path, tolerance, timeout_ms
+                    ));
+
                     let (found_x, found_y, found) = match image::open(&image_path) {
                         Ok(template) => {
                             let template = template.to_rgba8();
                             let start = std::time::Instant::now();
                             let mut result = (0i64, 0i64, false);
-                            
+
                             while start.elapsed().as_millis() < timeout_ms as u128 {
                                 if let Ok(monitors) = xcap::Monitor::all() {
                                     if let Some(monitor) = monitors.first() {
                                         if let Ok(screen) = monitor.capture_image() {
                                             let (fx, fy, f) = Self::find_template_in_image(
-                                                &screen, &template, tolerance,
-                                                0, 0, screen.width(), screen.height()
+                                                &screen,
+                                                &template,
+                                                tolerance,
+                                                0,
+                                                0,
+                                                screen.width(),
+                                                screen.height(),
                                             );
                                             if f {
                                                 result = (fx, fy, true);
@@ -1547,15 +1791,27 @@ impl Interpreter {
                             (0, 0, false)
                         }
                     };
-                    
-                    logger(format!("WaitForImage: Found={} at ({},{})", found, found_x, found_y));
-                    
+
+                    logger(format!(
+                        "WaitForImage: Found={} at ({},{})",
+                        found, found_x, found_y
+                    ));
+
                     {
                         let mut ctx = context.lock().unwrap();
                         let node_id_str = current_node_id.to_string();
-                        ctx.variables.insert(format!("__out_{}_X", node_id_str), VariableValue::Integer(found_x));
-                        ctx.variables.insert(format!("__out_{}_Y", node_id_str), VariableValue::Integer(found_y));
-                        ctx.variables.insert(format!("__out_{}_Found", node_id_str), VariableValue::Boolean(found));
+                        ctx.variables.insert(
+                            format!("__out_{}_X", node_id_str),
+                            VariableValue::Integer(found_x),
+                        );
+                        ctx.variables.insert(
+                            format!("__out_{}_Y", node_id_str),
+                            VariableValue::Integer(found_y),
+                        );
+                        ctx.variables.insert(
+                            format!("__out_{}_Found", node_id_str),
+                            VariableValue::Boolean(found),
+                        );
                     }
 
                     if let Some(next) = Self::follow_flow(&graph, current_node_id, "Next") {
@@ -1566,7 +1822,6 @@ impl Interpreter {
                 }
 
                 _ => break,
-
             }
             steps += 1;
         }
@@ -1909,7 +2164,8 @@ impl Interpreter {
                         .duration_since(UNIX_EPOCH)
                         .unwrap()
                         .as_nanos() as u64;
-                    let pseudo = ((seed.wrapping_mul(1103515245).wrapping_add(12345)) % (1 << 31)) as f64
+                    let pseudo = ((seed.wrapping_mul(1103515245).wrapping_add(12345)) % (1 << 31))
+                        as f64
                         / (1u64 << 31) as f64;
                     minf + pseudo * (maxf - minf)
                 };
@@ -1992,11 +2248,11 @@ impl Interpreter {
                 let source = Self::evaluate_input(graph, node.id, "Source", context)?;
                 let before = Self::evaluate_input(graph, node.id, "Before", context)?;
                 let after = Self::evaluate_input(graph, node.id, "After", context)?;
-                
+
                 let source_s = Self::to_string(&source);
                 let before_s = Self::to_string(&before);
                 let after_s = Self::to_string(&after);
-                
+
                 let result = if before_s.is_empty() && after_s.is_empty() {
                     source_s.clone()
                 } else if before_s.is_empty() {
@@ -2011,13 +2267,11 @@ impl Interpreter {
                 } else {
                     // Between "before" and "after"
                     match source_s.split_once(&before_s) {
-                        Some((_, rest)) => {
-                            rest.split(&after_s).next().unwrap_or("").to_string()
-                        }
+                        Some((_, rest)) => rest.split(&after_s).next().unwrap_or("").to_string(),
                         None => String::new(),
                     }
                 };
-                
+
                 Ok(VariableValue::String(result))
             }
             // FileRead
@@ -2030,23 +2284,21 @@ impl Interpreter {
                 }
             }
             // === Module H: Data Operations ===
-            
+
             // ArrayCreate - Creates an empty array
-            NodeType::ArrayCreate => {
-                Ok(VariableValue::Array(Vec::new()))
-            }
-            
+            NodeType::ArrayCreate => Ok(VariableValue::Array(Vec::new())),
+
             // ArrayGet - Get element at index from array
             NodeType::ArrayGet => {
                 let array = Self::evaluate_input(graph, node.id, "Array", context)?;
                 let index = Self::evaluate_input(graph, node.id, "Index", context)?;
-                
+
                 let idx = match index {
                     VariableValue::Integer(i) => i as usize,
                     VariableValue::Float(f) => f as usize,
                     _ => 0,
                 };
-                
+
                 match array {
                     VariableValue::Array(arr) => {
                         Ok(arr.get(idx).cloned().unwrap_or(VariableValue::None))
@@ -2054,14 +2306,15 @@ impl Interpreter {
                     // If input is a String, treat it as character array access
                     VariableValue::String(s) => {
                         let chars: Vec<char> = s.chars().collect();
-                        Ok(chars.get(idx)
+                        Ok(chars
+                            .get(idx)
                             .map(|c| VariableValue::String(c.to_string()))
                             .unwrap_or(VariableValue::None))
                     }
                     _ => Ok(VariableValue::None),
                 }
             }
-            
+
             // ArrayLength - Get the length of an array
             NodeType::ArrayLength => {
                 let array = Self::evaluate_input(graph, node.id, "Array", context)?;
@@ -2071,36 +2324,39 @@ impl Interpreter {
                     _ => Ok(VariableValue::Integer(0)),
                 }
             }
-            
+
             // JSONParse - Parse JSON string into VariableValue
             NodeType::JSONParse => {
                 let input = Self::evaluate_input(graph, node.id, "JSON", context)?;
                 let json_str = Self::to_string(&input);
-                
+
                 match serde_json::from_str::<serde_json::Value>(&json_str) {
                     Ok(value) => Ok(Self::json_to_variable_value(&value)),
                     Err(_) => Ok(VariableValue::None),
                 }
             }
-            
+
             // JSONStringify - Convert VariableValue to JSON string
             NodeType::JSONStringify => {
                 let input = Self::evaluate_input(graph, node.id, "Value", context)?;
                 let json_value = Self::variable_value_to_json(&input);
                 Ok(VariableValue::String(json_value.to_string()))
             }
-            
+
             // === Module D: Image Recognition (Pure Functions) ===
-            
+
             // ImageSimilarity - Compare two images and return similarity score
             NodeType::ImageSimilarity => {
                 let path1 = Self::evaluate_input(graph, node.id, "ImagePath1", context)
-                    .map(|v| Self::to_string(&v)).unwrap_or_default();
+                    .map(|v| Self::to_string(&v))
+                    .unwrap_or_default();
                 let path2 = Self::evaluate_input(graph, node.id, "ImagePath2", context)
-                    .map(|v| Self::to_string(&v)).unwrap_or_default();
+                    .map(|v| Self::to_string(&v))
+                    .unwrap_or_default();
                 let tolerance = Self::evaluate_input(graph, node.id, "Tolerance", context)
-                    .map(|v| Self::to_float(&v) as i32).unwrap_or(10);
-                
+                    .map(|v| Self::to_float(&v) as i32)
+                    .unwrap_or(10);
+
                 let similarity = match (image::open(&path1), image::open(&path2)) {
                     (Ok(img1), Ok(img2)) => {
                         let img1 = img1.to_rgba8();
@@ -2109,7 +2365,7 @@ impl Interpreter {
                     }
                     _ => 0.0,
                 };
-                
+
                 // Return based on output port requested
                 let port = _output_port;
                 if port == "Similarity" {
@@ -2120,12 +2376,12 @@ impl Interpreter {
                     Ok(VariableValue::Float(similarity))
                 }
             }
-            
+
             // GetWindowPosition (Impure-like data node with cached results)
             NodeType::GetWindowPosition => {
                 let output_port = _output_port;
                 let cache_key = format!("__winpos_{}", node.id);
-                
+
                 // Check if we have cached results
                 let (x, y, w, h, found) = {
                     let ctx = context.lock().unwrap();
@@ -2145,12 +2401,12 @@ impl Interpreter {
                         }
                     } else {
                         drop(ctx); // Release lock before running command
-                        
+
                         // Get window title input
                         let title = Self::evaluate_input(graph, node.id, "Title", context)
                             .map(|v| Self::to_string(&v))
                             .unwrap_or_default();
-                        
+
                         // Platform-specific implementation
                         #[cfg(target_os = "macos")]
                         let (x, y, w, h, found) = {
@@ -2198,7 +2454,7 @@ impl Interpreter {
                                 Err(_) => (0, 0, 1920, 1080, false),
                             }
                         };
-                        
+
                         #[cfg(target_os = "linux")]
                         let (x, y, w, h, found) = {
                             // Linux: Use xdotool to get window geometry
@@ -2207,20 +2463,33 @@ impl Interpreter {
                                 .output();
                             if let Ok(id_output) = id_result {
                                 let wid = String::from_utf8_lossy(&id_output.stdout)
-                                    .lines().next().unwrap_or("").to_string();
+                                    .lines()
+                                    .next()
+                                    .unwrap_or("")
+                                    .to_string();
                                 if !wid.is_empty() {
                                     if let Ok(geom) = std::process::Command::new("xdotool")
                                         .args(["getwindowgeometry", "--shell", &wid])
                                         .output()
                                     {
                                         let geom_str = String::from_utf8_lossy(&geom.stdout);
-                                        let mut x = 0i64; let mut y = 0i64;
-                                        let mut w = 1920i64; let mut h = 1080i64;
+                                        let mut x = 0i64;
+                                        let mut y = 0i64;
+                                        let mut w = 1920i64;
+                                        let mut h = 1080i64;
                                         for line in geom_str.lines() {
-                                            if line.starts_with("X=") { x = line[2..].parse().unwrap_or(0); }
-                                            if line.starts_with("Y=") { y = line[2..].parse().unwrap_or(0); }
-                                            if line.starts_with("WIDTH=") { w = line[6..].parse().unwrap_or(1920); }
-                                            if line.starts_with("HEIGHT=") { h = line[7..].parse().unwrap_or(1080); }
+                                            if line.starts_with("X=") {
+                                                x = line[2..].parse().unwrap_or(0);
+                                            }
+                                            if line.starts_with("Y=") {
+                                                y = line[2..].parse().unwrap_or(0);
+                                            }
+                                            if line.starts_with("WIDTH=") {
+                                                w = line[6..].parse().unwrap_or(1920);
+                                            }
+                                            if line.starts_with("HEIGHT=") {
+                                                h = line[7..].parse().unwrap_or(1080);
+                                            }
                                         }
                                         (x, y, w, h, true)
                                     } else {
@@ -2233,21 +2502,29 @@ impl Interpreter {
                                 (0, 0, 1920, 1080, false)
                             }
                         };
-                        
+
                         #[cfg(target_os = "windows")]
                         let (x, y, w, h, found) = (0i64, 0i64, 1920i64, 1080i64, true); // Windows stub
-                        
-                        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+
+                        #[cfg(not(any(
+                            target_os = "macos",
+                            target_os = "linux",
+                            target_os = "windows"
+                        )))]
                         let (x, y, w, h, found) = (0i64, 0i64, 1920i64, 1080i64, false);
-                        
+
                         // Cache the result
                         let cache_value = format!("{},{},{},{},{}", x, y, w, h, found);
-                        context.lock().unwrap().variables.insert(cache_key.clone(), VariableValue::String(cache_value));
-                        
+                        context
+                            .lock()
+                            .unwrap()
+                            .variables
+                            .insert(cache_key.clone(), VariableValue::String(cache_value));
+
                         (x, y, w, h, found)
                     }
                 };
-                
+
                 match output_port {
                     "X" => Ok(VariableValue::Integer(x)),
                     "Y" => Ok(VariableValue::Integer(y)),
@@ -2257,12 +2534,12 @@ impl Interpreter {
                     _ => Ok(VariableValue::None),
                 }
             }
-            
+
             // System Control & Image Recognition Outputs (retrieved from context storage)
-            NodeType::RunCommand 
-            | NodeType::LaunchApp 
-            | NodeType::CloseApp 
-            | NodeType::FocusWindow 
+            NodeType::RunCommand
+            | NodeType::LaunchApp
+            | NodeType::CloseApp
+            | NodeType::FocusWindow
             | NodeType::SetWindowPosition
             | NodeType::FindColor
             | NodeType::GetPixelColor
@@ -2273,13 +2550,16 @@ impl Interpreter {
             | NodeType::SaveScreenshot => {
                 let ctx = context.lock().unwrap();
                 let key = format!("__out_{}_{}", node.id, _output_port);
-                Ok(ctx.variables.get(&key).cloned().unwrap_or(VariableValue::None))
+                Ok(ctx
+                    .variables
+                    .get(&key)
+                    .cloned()
+                    .unwrap_or(VariableValue::None))
             }
 
             _ => Ok(VariableValue::None),
         }
     }
-
 
     fn to_bool(val: &VariableValue) -> bool {
         match val {
@@ -2296,7 +2576,13 @@ impl Interpreter {
             VariableValue::Float(f) => *f,
             VariableValue::Integer(i) => *i as f64,
             VariableValue::String(s) => s.parse().unwrap_or(0.0),
-            VariableValue::Boolean(b) => if *b { 1.0 } else { 0.0 },
+            VariableValue::Boolean(b) => {
+                if *b {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
             _ => 0.0,
         }
     }
@@ -2358,7 +2644,7 @@ impl Interpreter {
     }
 
     // === Module H: JSON Conversion Helpers ===
-    
+
     /// Convert serde_json::Value to VariableValue
     fn json_to_variable_value(value: &serde_json::Value) -> VariableValue {
         match value {
@@ -2375,7 +2661,8 @@ impl Interpreter {
             }
             serde_json::Value::String(s) => VariableValue::String(s.clone()),
             serde_json::Value::Array(arr) => {
-                let values: Vec<VariableValue> = arr.iter()
+                let values: Vec<VariableValue> = arr
+                    .iter()
                     .map(|v| Self::json_to_variable_value(v))
                     .collect();
                 VariableValue::Array(values)
@@ -2386,7 +2673,7 @@ impl Interpreter {
             }
         }
     }
-    
+
     /// Convert VariableValue to serde_json::Value
     fn variable_value_to_json(value: &VariableValue) -> serde_json::Value {
         match value {
@@ -2397,7 +2684,8 @@ impl Interpreter {
             VariableValue::String(s) => serde_json::Value::String(s.clone()),
             VariableValue::Vector3(x, y, z) => serde_json::json!([x, y, z]),
             VariableValue::Array(arr) => {
-                let values: Vec<serde_json::Value> = arr.iter()
+                let values: Vec<serde_json::Value> = arr
+                    .iter()
                     .map(|v| Self::variable_value_to_json(v))
                     .collect();
                 serde_json::Value::Array(values)
@@ -2406,7 +2694,7 @@ impl Interpreter {
     }
 
     // === Module A: Desktop Input Automation Helpers ===
-    
+
     /// Convert a string key name to an enigo Key variant
     fn string_to_key(key_str: &str) -> Option<Key> {
         match key_str.to_lowercase().as_str() {
@@ -2415,7 +2703,7 @@ impl Interpreter {
             "control" | "ctrl" | "lcontrol" => Some(Key::Control),
             "alt" | "option" | "lalt" => Some(Key::Alt),
             "meta" | "command" | "cmd" | "win" | "super" => Some(Key::Meta),
-            
+
             // Function keys
             "f1" => Some(Key::F1),
             "f2" => Some(Key::F2),
@@ -2429,7 +2717,7 @@ impl Interpreter {
             "f10" => Some(Key::F10),
             "f11" => Some(Key::F11),
             "f12" => Some(Key::F12),
-            
+
             // Navigation keys
             "up" | "uparrow" => Some(Key::UpArrow),
             "down" | "downarrow" => Some(Key::DownArrow),
@@ -2439,7 +2727,7 @@ impl Interpreter {
             "end" => Some(Key::End),
             "pageup" | "pgup" => Some(Key::PageUp),
             "pagedown" | "pgdn" => Some(Key::PageDown),
-            
+
             // Special keys
             "return" | "enter" => Some(Key::Return),
             "escape" | "esc" => Some(Key::Escape),
@@ -2448,19 +2736,17 @@ impl Interpreter {
             "delete" | "del" => Some(Key::Delete),
             "space" | " " => Some(Key::Space),
             "capslock" | "caps" => Some(Key::CapsLock),
-            
+
             // If single character, return as Unicode key
-            _ if key_str.len() == 1 => {
-                key_str.chars().next().map(Key::Unicode)
-            }
-            
+            _ if key_str.len() == 1 => key_str.chars().next().map(Key::Unicode),
+
             // Unknown key
             _ => None,
         }
     }
-    
+
     // === Module D: Image Recognition Helper ===
-    
+
     /// Find a template image within a screen image using simple template matching.
     /// Uses grid sampling for performance and tolerance for fuzzy matching.
     fn find_template_in_image(
@@ -2474,22 +2760,26 @@ impl Interpreter {
     ) -> (i64, i64, bool) {
         let tpl_w = template.width();
         let tpl_h = template.height();
-        
+
         if tpl_w == 0 || tpl_h == 0 {
             return (0, 0, false);
         }
-        
-        let end_x = (region_x + region_w).min(screen.width()).saturating_sub(tpl_w);
-        let end_y = (region_y + region_h).min(screen.height()).saturating_sub(tpl_h);
-        
+
+        let end_x = (region_x + region_w)
+            .min(screen.width())
+            .saturating_sub(tpl_w);
+        let end_y = (region_y + region_h)
+            .min(screen.height())
+            .saturating_sub(tpl_h);
+
         // Grid sample step for performance (check every Nth pixel of template)
         let sample_step = 4u32.max((tpl_w * tpl_h / 100).max(1));
-        
+
         for sy in region_y..=end_y {
             for sx in region_x..=end_x {
                 let mut matches = true;
                 let mut checked = 0u32;
-                
+
                 // Sample points in template
                 'check: for ty in (0..tpl_h).step_by(sample_step as usize) {
                     for tx in (0..tpl_w).step_by(sample_step as usize) {
@@ -2498,12 +2788,12 @@ impl Interpreter {
                         if tpl_pixel[3] < 128 {
                             continue;
                         }
-                        
+
                         let scr_pixel = screen.get_pixel(sx + tx, sy + ty);
                         let dr = (scr_pixel[0] as i32 - tpl_pixel[0] as i32).abs();
                         let dg = (scr_pixel[1] as i32 - tpl_pixel[1] as i32).abs();
                         let db = (scr_pixel[2] as i32 - tpl_pixel[2] as i32).abs();
-                        
+
                         if dr > tolerance || dg > tolerance || db > tolerance {
                             matches = false;
                             break 'check;
@@ -2511,59 +2801,55 @@ impl Interpreter {
                         checked += 1;
                     }
                 }
-                
+
                 // Require at least some pixels checked
                 if matches && checked > 5 {
                     return (sx as i64, sy as i64, true);
                 }
             }
         }
-        
+
         (0, 0, false)
     }
-    
+
     /// Compare two images and return similarity score (0.0 - 1.0), considering tolerance
-    fn compare_images(
-        img1: &image::RgbaImage,
-        img2: &image::RgbaImage,
-        tolerance: i32,
-    ) -> f64 {
+    fn compare_images(img1: &image::RgbaImage, img2: &image::RgbaImage, tolerance: i32) -> f64 {
         // If sizes don't match, return 0
         if img1.width() != img2.width() || img1.height() != img2.height() {
             return 0.0;
         }
-        
+
         let total_pixels = (img1.width() * img1.height()) as f64;
         if total_pixels == 0.0 {
             return 0.0;
         }
-        
+
         let mut matching_pixels = 0u64;
-        
+
         // Sample for performance on large images
         let sample_step = 1u32.max((total_pixels as u32 / 10000).max(1));
         let mut sampled = 0u64;
-        
+
         for y in (0..img1.height()).step_by(sample_step as usize) {
             for x in (0..img1.width()).step_by(sample_step as usize) {
                 let p1 = img1.get_pixel(x, y);
                 let p2 = img2.get_pixel(x, y);
-                
+
                 let dr = (p1[0] as i32 - p2[0] as i32).abs();
                 let dg = (p1[1] as i32 - p2[1] as i32).abs();
                 let db = (p1[2] as i32 - p2[2] as i32).abs();
-                
+
                 if dr <= tolerance && dg <= tolerance && db <= tolerance {
                     matching_pixels += 1;
                 }
                 sampled += 1;
             }
         }
-        
+
         if sampled == 0 {
             return 0.0;
         }
-        
+
         (matching_pixels as f64) / (sampled as f64)
     }
 }
