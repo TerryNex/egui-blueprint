@@ -633,10 +633,27 @@ impl Interpreter {
                         _ => Button::Left,
                     };
 
-                    logger(format!("MouseDown: {}", button_str));
+                    // Move to X/Y coordinates first
+                    let x = Self::evaluate_input(&graph, current_node_id, "X", &context)
+                        .map(|v| match v {
+                            VariableValue::Integer(i) => i as i32,
+                            VariableValue::Float(f) => f as i32,
+                            _ => 0,
+                        })
+                        .unwrap_or(0);
+                    let y = Self::evaluate_input(&graph, current_node_id, "Y", &context)
+                        .map(|v| match v {
+                            VariableValue::Integer(i) => i as i32,
+                            VariableValue::Float(f) => f as i32,
+                            _ => 0,
+                        })
+                        .unwrap_or(0);
+
+                    logger(format!("MouseDown: {} at ({}, {})", button_str, x, y));
 
                     match Enigo::new(&Settings::default()) {
                         Ok(mut enigo) => {
+                            let _ = enigo.move_mouse(x, y, Coordinate::Abs);
                             let _ = enigo.button(button, Direction::Press);
                         }
                         Err(e) => logger(format!("MouseDown Error: {}", e)),
@@ -661,10 +678,27 @@ impl Interpreter {
                         _ => Button::Left,
                     };
 
-                    logger(format!("MouseUp: {}", button_str));
+                    // Move to X/Y coordinates first
+                    let x = Self::evaluate_input(&graph, current_node_id, "X", &context)
+                        .map(|v| match v {
+                            VariableValue::Integer(i) => i as i32,
+                            VariableValue::Float(f) => f as i32,
+                            _ => 0,
+                        })
+                        .unwrap_or(0);
+                    let y = Self::evaluate_input(&graph, current_node_id, "Y", &context)
+                        .map(|v| match v {
+                            VariableValue::Integer(i) => i as i32,
+                            VariableValue::Float(f) => f as i32,
+                            _ => 0,
+                        })
+                        .unwrap_or(0);
+
+                    logger(format!("MouseUp: {} at ({}, {})", button_str, x, y));
 
                     match Enigo::new(&Settings::default()) {
                         Ok(mut enigo) => {
+                            let _ = enigo.move_mouse(x, y, Coordinate::Abs);
                             let _ = enigo.button(button, Direction::Release);
                         }
                         Err(e) => logger(format!("MouseUp Error: {}", e)),

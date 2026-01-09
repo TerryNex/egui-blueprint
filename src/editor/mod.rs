@@ -145,6 +145,7 @@ pub struct GraphEditor {
     pub hovered_port: Option<(Uuid, String, bool)>,
     /// Group ID currently being edited for name (double-click on header)
     pub editing_group_name: Option<Uuid>,
+    pub recorder: crate::recorder::Recorder,
 }
 
 impl Default for GraphEditor {
@@ -166,6 +167,7 @@ impl Default for GraphEditor {
             editing_node_name: None,
             hovered_port: None,
             editing_group_name: None,
+            recorder: crate::recorder::Recorder::new(),
         }
     }
 }
@@ -612,19 +614,33 @@ impl GraphEditor {
         }
 
         // Background Selection Box Logic
+        // Allow starting box selection on background even if a node was previously interacted with
+        let on_background = if let Some(pos) = pointer_pos {
+            // Check if pointer is over any node
+            let over_node = graph.nodes.values().any(|node| {
+                let node_pos = Pos2::new(node.position.0, node.position.1);
+                let screen_pos = self.to_screen(node_pos, clip_rect.min);
+                let estimated_size = egui::vec2(200.0 * self.zoom, 100.0 * self.zoom);
+                let node_rect = Rect::from_min_size(screen_pos, estimated_size);
+                node_rect.contains(pos)
+            });
+            !over_node
+        } else {
+            false
+        };
+
         if input_primary_down
-            && !interaction_consumed
+            && on_background
             && node_to_move.is_none()
             && connect_event.is_none()
             && self.connection_start.is_none()
             && !input_modifiers.alt
-            && !ui.ctx().is_using_pointer()
         {
             if let Some(pos) = pointer_pos {
                 if let Some(mut rect) = self.selection_box {
                     rect.max = pos;
                     self.selection_box = Some(rect);
-                } else if input_primary_pressed && !ui.memory(|m| m.any_popup_open()) {
+                } else if input_primary_pressed {
                     self.selection_box = Some(Rect::from_min_max(pos, pos));
                     // Clear selection on background click
                     if !input_modifiers.shift {
@@ -830,7 +846,10 @@ impl GraphEditor {
 
         // Better approach: collect text first
         let mut typed_search = None;
-        if self.node_finder.is_none() && !ui.memory(|m| m.focused().is_some()) {
+        if self.node_finder.is_none()
+            && !ui.memory(|m| m.focused().is_some())
+            && !self.recorder.is_recording()
+        {
             ui.input(|i| {
                 for event in &i.events {
                     if let egui::Event::Text(text) = event {
@@ -3714,7 +3733,7 @@ impl GraphEditor {
                                                 && VALID_BUTTONS
                                                     .contains(&s.to_lowercase().as_str()))
                                         {
-                                            Color32::WHITE
+                                            ui.style().visuals.text_color()
                                         } else {
                                             Color32::RED
                                         };

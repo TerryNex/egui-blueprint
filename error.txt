@@ -1,0 +1,90 @@
+    Checking egui_blueprint v0.1.0 (C:\Users\Terry\RustroverProjects\egui_blueprint)
+warning: unused import: `crate::graph::Node`
+ --> src\recorder\mod.rs:1:5
+  |
+1 | use crate::graph::Node;
+  |     ^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `Event`
+ --> src\recorder\mapper.rs:4:20
+  |
+4 | use rdev::{Button, Event, EventType};
+  |                    ^^^^^
+
+warning: unused import: `VariableValue`
+  --> src\main.rs:11:41
+   |
+11 | use graph::{BlueprintGraph, Node, Port, VariableValue};
+   |                                         ^^^^^^^^^^^^^
+
+warning: use of deprecated function `egui::popup_below_widget`: Use `egui::Popup` instead
+    --> src\editor\mod.rs:3745:47
+     |
+3745 | ...                   egui::popup_below_widget(
+     |                             ^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated method `egui::Memory::any_popup_open`: Use Popup::is_any_open instead
+   --> src\editor\mod.rs:629:69
+    |
+629 |                 } else if input_primary_pressed && !ui.memory(|m| m.any_popup_open()) {
+    |                                                                     ^^^^^^^^^^^^^^
+
+warning: use of deprecated method `egui::Memory::open_popup`: Use Popup::open_id instead
+    --> src\editor\mod.rs:3737:65
+     |
+3737 | ...                   ui.memory_mut(|m| m.open_popup(popup_id));
+     |                                           ^^^^^^^^^^
+
+warning: use of deprecated method `egui::Memory::toggle_popup`: Use Popup::toggle_id instead
+    --> src\editor\mod.rs:3742:65
+     |
+3742 | ...                   ui.memory_mut(|m| m.toggle_popup(popup_id));
+     |                                           ^^^^^^^^^^^^
+
+error[E0609]: no field `canvas_size` on type `GraphEditor`
+   --> src\main.rs:478:55
+    |
+478 |                     -self.editor.pan.x + (self.editor.canvas_size.x / 2.0) / self.editor.zoom;
+    |                                                       ^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `pan`, `zoom`, `dragging_node`, `connection_start`, `node_finder` ... and 11 others
+
+error[E0609]: no field `canvas_size` on type `GraphEditor`
+   --> src\main.rs:480:55
+    |
+480 |                     -self.editor.pan.y + (self.editor.canvas_size.y / 2.0) / self.editor.zoom;
+    |                                                       ^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `pan`, `zoom`, `dragging_node`, `connection_start`, `node_finder` ... and 11 others
+
+error[E0609]: no field `canvas_size` on type `GraphEditor`
+   --> src\main.rs:514:71
+    |
+514 |                     -node.position.0 * self.editor.zoom + self.editor.canvas_size.x / 2.0;
+    |                                                                       ^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `pan`, `zoom`, `dragging_node`, `connection_start`, `node_finder` ... and 11 others
+
+error[E0609]: no field `canvas_size` on type `GraphEditor`
+   --> src\main.rs:516:71
+    |
+516 |                     -node.position.1 * self.editor.zoom + self.editor.canvas_size.y / 2.0;
+    |                                                                       ^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `pan`, `zoom`, `dragging_node`, `connection_start`, `node_finder` ... and 11 others
+
+warning: unused variable: `title`
+    --> src\executor\mod.rs:2406:29
+     |
+2406 |                         let title = Self::evaluate_input(graph, node.id, "Title", context)
+     |                             ^^^^^ help: if this is intentional, prefix it with an underscore: `_title`
+     |
+     = note: `#[warn(unused_variables)]` on by default
+
+For more information about this error, try `rustc --explain E0609`.
+warning: `egui_blueprint` (bin "egui_blueprint") generated 8 warnings
+error: could not compile `egui_blueprint` (bin "egui_blueprint") due to 4 previous errors; 8 warnings emitted

@@ -1,0 +1,98 @@
+    Checking egui_blueprint v0.1.0 (C:\Users\Terry\RustroverProjects\egui_blueprint)
+warning: unused import: `crate::graph::Node`
+ --> src\recorder\mod.rs:1:5
+  |
+1 | use crate::graph::Node;
+  |     ^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `Event`
+ --> src\recorder\mapper.rs:4:20
+  |
+4 | use rdev::{Button, Event, EventType};
+  |                    ^^^^^
+
+warning: unused import: `VariableValue`
+  --> src\main.rs:11:41
+   |
+11 | use graph::{BlueprintGraph, Node, Port, VariableValue};
+   |                                         ^^^^^^^^^^^^^
+
+warning: use of deprecated function `egui::popup_below_widget`: Use `egui::Popup` instead
+    --> src\editor\mod.rs:3745:47
+     |
+3745 | ...                   egui::popup_below_widget(
+     |                             ^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated method `egui::Memory::any_popup_open`: Use Popup::is_any_open instead
+   --> src\editor\mod.rs:629:69
+    |
+629 |                 } else if input_primary_pressed && !ui.memory(|m| m.any_popup_open()) {
+    |                                                                     ^^^^^^^^^^^^^^
+
+warning: use of deprecated method `egui::Memory::open_popup`: Use Popup::open_id instead
+    --> src\editor\mod.rs:3737:65
+     |
+3737 | ...                   ui.memory_mut(|m| m.open_popup(popup_id));
+     |                                           ^^^^^^^^^^
+
+warning: use of deprecated method `egui::Memory::toggle_popup`: Use Popup::toggle_id instead
+    --> src\editor\mod.rs:3742:65
+     |
+3742 | ...                   ui.memory_mut(|m| m.toggle_popup(popup_id));
+     |                                           ^^^^^^^^^^^^
+
+error[E0308]: mismatched types
+   --> src\recorder\mapper.rs:137:49
+    |
+137 |             default_value: VariableValue::Float(duration),
+    |                            -------------------- ^^^^^^^^ expected `f64`, found `f32`
+    |                            |
+    |                            arguments to this enum variant are incorrect
+    |
+note: tuple variant defined here
+   --> src\graph.rs:82:5
+    |
+ 82 |     Float(f64),
+    |     ^^^^^
+help: you can convert an `f32` to an `f64`
+    |
+137 |             default_value: VariableValue::Float(duration.into()),
+    |                                                         +++++++
+
+warning: use of deprecated method `egui::Context::screen_rect`: screen_rect has been split into viewport_rect() and content_rect(). You likely should use content_rect()
+   --> src\main.rs:486:39
+    |
+486 |                 let screen_rect = ctx.screen_rect();
+    |                                       ^^^^^^^^^^^
+
+warning: unused variable: `title`
+    --> src\executor\mod.rs:2406:29
+     |
+2406 |                         let title = Self::evaluate_input(graph, node.id, "Title", context)
+     |                             ^^^^^ help: if this is intentional, prefix it with an underscore: `_title`
+     |
+     = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `id`
+   --> src\main.rs:926:30
+    |
+926 |                         for (id, group) in &self.graph.groups {
+    |                              ^^ help: if this is intentional, prefix it with an underscore: `_id`
+
+warning: variable does not need to be mutable
+   --> src\main.rs:336:17
+    |
+336 |             let mut final_action = action;
+    |                 ----^^^^^^^^^^^^
+    |                 |
+    |                 help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` on by default
+
+For more information about this error, try `rustc --explain E0308`.
+warning: `egui_blueprint` (bin "egui_blueprint") generated 11 warnings
+error: could not compile `egui_blueprint` (bin "egui_blueprint") due to 1 previous error; 11 warnings emitted

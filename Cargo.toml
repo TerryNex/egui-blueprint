@@ -22,3 +22,6 @@ xcap = "0.8"
 image = "0.25"
 # System Monitoring (Debug Window)
 sysinfo = "0.35"
+# Input Recording (Module E)
+rdev = "0.5"
+crossbeam-channel = "0.5"

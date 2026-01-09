@@ -3,13 +3,15 @@ mod executor;
 mod graph;
 mod history;
 mod node_types;
+mod recorder;
 
 use chrono::Local;
 use editor::GraphEditor;
 use eframe::egui;
-use graph::{BlueprintGraph, Node, Port};
+use graph::{BlueprintGraph, Node, Port, VariableValue};
 use history::UndoStack;
 use node_types::{DataType, NodeType};
+use rdev;
 use std::sync::mpsc::Receiver;
 use sysinfo::{Pid, ProcessesToUpdate, System};
 use uuid::Uuid;
@@ -48,6 +50,14 @@ struct MyApp {
     system: System,
     frame_times: Vec<f32>,
     last_frame_time: std::time::Instant,
+    // Recording Options
+    use_relative_coords: bool,
+    last_recorded_node_id: Option<Uuid>,
+    // Mouse buffering for Click/Drag distinction
+    pending_mouse_down: Option<(std::time::Instant, f64, f64, rdev::Button)>, // time, x, y, button
+    // Nodes window state
+    nodes_search_filter: String,
+    nodes_sort_mode: u8, // 0 = default, 1 = alphabetical, 2 = by type
 }
 
 impl Default for MyApp {
@@ -66,6 +76,11 @@ impl Default for MyApp {
             system: System::new_all(),
             frame_times: Vec::with_capacity(120),
             last_frame_time: std::time::Instant::now(),
+            use_relative_coords: false,
+            last_recorded_node_id: None,
+            pending_mouse_down: None,
+            nodes_search_filter: String::new(),
+            nodes_sort_mode: 0,
         };
         let _ = std::fs::create_dir_all("scripts");
         // Load settings first (may auto-load last script)
@@ -288,8 +303,233 @@ impl eframe::App for MyApp {
                 if ui.button("Debug").clicked() {
                     self.show_debug_window = !self.show_debug_window;
                 }
+
+                ui.separator();
+                let is_recording = self.editor.recorder.is_recording();
+                let text = if is_recording {
+                    "⏹ Stop Recording"
+                } else {
+                    "⏺ Record"
+                };
+                let color = if is_recording {
+                    egui::Color32::RED
+                } else {
+                    egui::Color32::WHITE
+                };
+                if ui
+                    .add(egui::Button::new(egui::RichText::new(text).color(color)))
+                    .clicked()
+                {
+                    if is_recording {
+                        self.editor.recorder.stop();
+                        self.logs.push("[System] Recording Stopped".into());
+                        self.last_recorded_node_id = None;
+                        self.pending_mouse_down = None;
+                    } else {
+                        self.editor.recorder.start();
+                        self.logs.push("[System] Recording Started...".into());
+                        self.last_recorded_node_id = None;
+                    }
+                }
+
+                ui.checkbox(&mut self.use_relative_coords, "Relative Coords");
             });
         });
+
+        // Process Recorded Events
+        while let Ok(action) = self.editor.recorder.rx.try_recv() {
+            let mut final_action = action;
+            // 1. Relative Coordinates
+            // (Placeholder. For now use screen coords as requested basic feature)
+
+            // 2. Click vs Drag Logic
+            let mut nodes_to_add = Vec::new();
+
+            // Helper to convert Button to string
+            fn btn_to_str(b: rdev::Button) -> String {
+                match b {
+                    rdev::Button::Left => "Left".to_string(),
+                    rdev::Button::Right => "Right".to_string(),
+                    rdev::Button::Middle => "Middle".to_string(),
+                    _ => "Left".to_string(),
+                }
+            }
+
+            // Check timeout for pending mouse down
+            if let Some((time, start_x, start_y, btn)) = self.pending_mouse_down.take() {
+                if time.elapsed().as_millis() > 200 {
+                    // Timeout -> Emit MouseDown
+                    let node = recorder::mapper::create_mouse_btn_node(
+                        NodeType::MouseDown,
+                        (0.0, 0.0), // Pos set later
+                        btn_to_str(btn),
+                        start_x as i64,
+                        start_y as i64,
+                    );
+                    nodes_to_add.push(node);
+                    // We consumed pending, set to None (already taken)
+                } else {
+                    // Put it back if not expired? No, we check every frame.
+                    // If not expired, keep waiting.
+                    self.pending_mouse_down = Some((time, start_x, start_y, btn));
+                }
+            }
+
+            match final_action.event.event_type {
+                rdev::EventType::ButtonPress(button) => {
+                    // Start pending
+                    // If one already exists (timeout not hit but new press?), force emit old one?
+                    // Currently single pending support.
+                    if let Some((_, sx, sy, sb)) = self.pending_mouse_down.take() {
+                        // Emit implicit MouseDown for previous
+                        let node = recorder::mapper::create_mouse_btn_node(
+                            NodeType::MouseDown,
+                            (0.0, 0.0),
+                            btn_to_str(sb),
+                            sx as i64,
+                            sy as i64,
+                        );
+                        nodes_to_add.push(node);
+                    }
+
+                    self.pending_mouse_down = Some((
+                        std::time::Instant::now(),
+                        final_action.cursor_position.0,
+                        final_action.cursor_position.1,
+                        button,
+                    ));
+                }
+                rdev::EventType::ButtonRelease(button) => {
+                    let (x, y) = (
+                        final_action.cursor_position.0 as i64,
+                        final_action.cursor_position.1 as i64,
+                    );
+                    let btn_str = btn_to_str(button);
+
+                    if let Some((time, start_x, start_y, start_btn)) =
+                        self.pending_mouse_down.take()
+                    {
+                        // Check distance & button match
+                        let dist = ((final_action.cursor_position.0 - start_x).powi(2)
+                            + (final_action.cursor_position.1 - start_y).powi(2))
+                        .sqrt();
+
+                        let same_btn = btn_str == btn_to_str(start_btn);
+
+                        if dist < 5.0 && same_btn {
+                            // Click!
+                            // Use RightClick for Right button
+                            let node_type = if matches!(button, rdev::Button::Right) {
+                                NodeType::RightClick // Assuming RightClick node exists and behaves like Click
+                            } else {
+                                NodeType::Click
+                            };
+
+                            // RightClick node might not have "Button" input, but standard X/Y.
+                            // Click node has X/Y.
+                            // Let's use create_click_node for both as they share structure (Inputs: Exec, X, Y)
+
+                            let node =
+                                recorder::mapper::create_click_node(node_type, (0.0, 0.0), x, y);
+                            nodes_to_add.push(node);
+                        } else {
+                            // Drag -> Full sequence: MouseDown -> Delay -> MouseMove -> Delay -> MouseUp
+
+                            // 1. MouseDown at start position
+                            let node_down = recorder::mapper::create_mouse_btn_node(
+                                NodeType::MouseDown,
+                                (0.0, 0.0),
+                                btn_to_str(start_btn),
+                                start_x as i64,
+                                start_y as i64,
+                            );
+                            nodes_to_add.push(node_down);
+
+                            // 2. First Delay (10ms default or actual elapsed / 2)
+                            let elapsed = time.elapsed().as_secs_f32();
+                            let delay_amount = if elapsed > 0.02 { elapsed / 2.0 } else { 0.01 };
+                            let node_delay1 =
+                                recorder::mapper::create_delay_node((0.0, 0.0), delay_amount);
+                            nodes_to_add.push(node_delay1);
+
+                            // 3. MouseMove to end position
+                            let node_move =
+                                recorder::mapper::create_mouse_move_node((0.0, 0.0), x, y);
+                            nodes_to_add.push(node_move);
+
+                            // 4. Second Delay (10ms default or actual elapsed / 2)
+                            let node_delay2 =
+                                recorder::mapper::create_delay_node((0.0, 0.0), delay_amount);
+                            nodes_to_add.push(node_delay2);
+
+                            // 5. MouseUp at end position
+                            let node_up = recorder::mapper::create_mouse_btn_node(
+                                NodeType::MouseUp,
+                                (0.0, 0.0),
+                                btn_str,
+                                x,
+                                y,
+                            );
+                            nodes_to_add.push(node_up);
+                        }
+                    } else {
+                        // Release without pending (e.g. timeout fired already, or held from before)
+                        // Just MouseUp
+                        let node = recorder::mapper::create_mouse_btn_node(
+                            NodeType::MouseUp,
+                            (0.0, 0.0),
+                            btn_str,
+                            x,
+                            y,
+                        );
+                        nodes_to_add.push(node);
+                    }
+                }
+                _ => {
+                    // KeyPress etc.
+                    // Mapper handles KeyPress.
+                    let pos = (0.0, 0.0);
+                    if let Some(node) = recorder::mapper::map_action_to_node(final_action, pos) {
+                        nodes_to_add.push(node);
+                    }
+                }
+            }
+
+            for mut node in nodes_to_add {
+                // Simple Placement: Place to the right of the rightmost node
+                let max_x = self
+                    .graph
+                    .nodes
+                    .values()
+                    .map(|n| n.position.0)
+                    .fold(100.0, f32::max);
+
+                if let Some(prev_id) = self.last_recorded_node_id {
+                    // Follow chain vertically
+                    if let Some(prev_node) = self.graph.nodes.get(&prev_id) {
+                        node.position = (prev_node.position.0 + 250.0, prev_node.position.1);
+                    } else {
+                        node.position = (max_x + 250.0, 100.0);
+                    }
+
+                    // Auto-Connect
+                    self.graph.connections.push(crate::graph::Connection {
+                        from_node: prev_id,
+                        from_port: "Next".to_string(),
+                        to_node: node.id,
+                        to_port: "In".to_string(),
+                    });
+                } else {
+                    // Start of new chain
+                    node.position = (max_x + 250.0, 100.0);
+                }
+
+                self.last_recorded_node_id = Some(node.id);
+                let name = format!("{:?}", node.node_type);
+                self.logs.push(format!("[Record] Captured: {}", name));
+                self.graph.nodes.insert(node.id, node);
+            }
+        }
 
         // Drain logs from async threads
         if let Some(rx) = &self.log_receiver {
@@ -513,9 +753,38 @@ impl eframe::App for MyApp {
             .default_height(400.0)
             .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 40.0))
             .show(ctx, |ui| {
+                // Search bar
+                ui.horizontal(|ui| {
+                    ui.label("🔍");
+                    ui.text_edit_singleline(&mut self.nodes_search_filter);
+                });
+
+                // Sort buttons
+                ui.horizontal(|ui| {
+                    if ui
+                        .selectable_label(self.nodes_sort_mode == 0, "Default")
+                        .clicked()
+                    {
+                        self.nodes_sort_mode = 0;
+                    }
+                    if ui
+                        .selectable_label(self.nodes_sort_mode == 1, "A-Z")
+                        .clicked()
+                    {
+                        self.nodes_sort_mode = 1;
+                    }
+                    if ui
+                        .selectable_label(self.nodes_sort_mode == 2, "Type")
+                        .clicked()
+                    {
+                        self.nodes_sort_mode = 2;
+                    }
+                });
+                ui.separator();
+
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     // Collect node info first to avoid borrow conflicts
-                    let node_info: Vec<_> = self
+                    let mut node_info: Vec<_> = self
                         .graph
                         .nodes
                         .values()
@@ -609,7 +878,7 @@ impl eframe::App for MyApp {
                                     .header_colors
                                     .get("Function")
                                     .copied()
-                                    .unwrap_or(egui::Color32::from_rgb(50, 100, 200)),
+                                    .unwrap_or(egui::Color32::from_rgb(50, 100, 180)),
                                 NodeType::Add
                                 | NodeType::Subtract
                                 | NodeType::Multiply
@@ -627,7 +896,7 @@ impl eframe::App for MyApp {
                                     .header_colors
                                     .get("Math")
                                     .copied()
-                                    .unwrap_or(egui::Color32::from_rgb(50, 150, 100)),
+                                    .unwrap_or(egui::Color32::from_rgb(50, 150, 50)),
                                 NodeType::GetVariable { .. } | NodeType::SetVariable { .. } => self
                                     .editor
                                     .style
@@ -644,11 +913,27 @@ impl eframe::App for MyApp {
                                     .unwrap_or(egui::Color32::from_rgb(100, 100, 100)),
                             };
 
-                            (node.id, display, node.position, header_color)
+                            // Include type_name for sorting by type
+                            (node.id, display, node.position, header_color, type_name)
                         })
                         .collect();
 
-                    for (node_id, name, position, header_color) in node_info {
+                    // Filter by search
+                    let search_lower = self.nodes_search_filter.to_lowercase();
+                    if !search_lower.is_empty() {
+                        node_info.retain(|(_, display, _, _, _)| {
+                            display.to_lowercase().contains(&search_lower)
+                        });
+                    }
+
+                    // Sort
+                    match self.nodes_sort_mode {
+                        1 => node_info.sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase())),
+                        2 => node_info.sort_by(|a, b| a.4.to_lowercase().cmp(&b.4.to_lowercase())),
+                        _ => {} // Default: no sorting (insertion order)
+                    }
+
+                    for (node_id, name, position, header_color, _type_name) in node_info {
                         // Highlight if node is selected
                         let is_selected = self.editor.selected_nodes.contains(&node_id);
                         let fill_color = if is_selected {
