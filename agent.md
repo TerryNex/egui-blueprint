@@ -59,3 +59,40 @@ Before final delivery of ANY code changes:
 
 - [egui Goals](https://github.com/emilk/egui?tab=readme-ov-file#goals)
 - [egui Documentation (0.33.3)](https://docs.rs/egui/0.33.3/egui/)
+
+---
+
+## Module Location Guide
+
+> [!IMPORTANT]
+> **File Size Guideline**: Each code file should remain under 300 lines when possible to improve readability and reduce cognitive load when making changes.
+
+### Editor Code (`src/editor.rs` or `src/editor/`)
+| Module | Purpose |
+|--------|---------|
+| `editor.rs` | Main GraphEditor struct, show() function, all UI logic |
+| Future: `style.rs` | EditorStyle, color definitions |
+| Future: `node_renderer.rs` | Node drawing, size calculation |
+| Future: `connection_renderer.rs` | Bezier curves, port positions |
+| Future: `node_ports.rs` | Port definitions per node type |
+| Future: `groups.rs` | Node group functionality |
+| Future: `node_finder.rs` | Add node search menu |
+
+### Executor Code (`src/executor.rs` or `src/executor/`)
+| Module | Purpose |
+|--------|---------|
+| `executor.rs` | Legacy single-file version (functional) |
+| `executor/mod.rs` | Interpreter entry point, run_async |
+| `executor/context.rs` | ExecutionContext, variable storage |
+| `executor/flow_control.rs` | execute_flow, control flow nodes |
+| `executor/node_eval.rs` | evaluate_node, evaluate_input |
+| `executor/type_conversions.rs` | to_bool, to_float, to_string, compute_math |
+| `executor/automation.rs` | string_to_key, keyboard helpers |
+| `executor/image_recognition.rs` | find_template_in_image, compare_images |
+
+### Data Structures (`src/`)
+| File | Purpose |
+|------|---------|
+| `graph.rs` | BlueprintGraph, Node, Connection, VariableValue |
+| `node_types.rs` | NodeType enum, DataType enum |
+| `history.rs` | UndoStack for undo/redo |
