@@ -1,8 +1,26 @@
+//! # Blueprint Executor
+//!
+//! This module handles the execution of blueprint graphs.
+//!
+//! ## Submodules
+//! - [`helpers`]: Value conversion utilities (to_bool, to_float, to_string, etc.)
+//! - [`json_helpers`]: JSON conversion functions
+//! - [`image_matching`]: Template matching algorithms
+//! - [`flow_control`]: Loop and branch execution
+//! - [`node_eval`]: Node evaluation logic
+//! - [`automation`]: Input automation helpers
+//!
+//! ## Main Entry Point
+//! Use [`Interpreter::run_async`] to execute a blueprint graph.
+
 // Submodules
 pub mod automation;
 pub mod context;
 pub mod flow_control;
+pub mod helpers;
+pub mod image_matching;
 pub mod image_recognition;
+pub mod json_helpers;
 pub mod node_eval;
 pub mod type_conversions;
 
@@ -2844,62 +2862,19 @@ impl Interpreter {
     }
 
     fn to_bool(val: &VariableValue) -> bool {
-        match val {
-            VariableValue::Boolean(b) => *b,
-            VariableValue::Integer(i) => *i > 0,
-            VariableValue::Float(f) => *f > 0.0,
-            VariableValue::String(s) => s.to_lowercase() == "true" || s == "1",
-            _ => false,
-        }
+        helpers::to_bool(val)
     }
 
     fn to_float(val: &VariableValue) -> f64 {
-        match val {
-            VariableValue::Float(f) => *f,
-            VariableValue::Integer(i) => *i as f64,
-            VariableValue::String(s) => s.parse().unwrap_or(0.0),
-            VariableValue::Boolean(b) => {
-                if *b {
-                    1.0
-                } else {
-                    0.0
-                }
-            }
-            _ => 0.0,
-        }
+        helpers::to_float(val)
     }
 
     fn to_string(val: &VariableValue) -> String {
-        match val {
-            VariableValue::String(s) => s.clone(),
-            VariableValue::Integer(i) => i.to_string(),
-            VariableValue::Float(f) => f.to_string(),
-            VariableValue::Boolean(b) => b.to_string(),
-            VariableValue::Vector3(x, y, z) => format!("({}, {}, {})", x, y, z),
-            VariableValue::Array(arr) => {
-                let items: Vec<String> = arr.iter().map(|v| Self::to_string(v)).collect();
-                format!("[{}]", items.join(", "))
-            }
-            VariableValue::None => "None".to_string(),
-        }
+        helpers::to_string(val)
     }
 
     fn compare_values(a: &VariableValue, b: &VariableValue) -> std::cmp::Ordering {
-        match (a, b) {
-            (VariableValue::Float(av), VariableValue::Float(bv)) => {
-                av.partial_cmp(bv).unwrap_or(std::cmp::Ordering::Equal)
-            }
-            (VariableValue::Integer(av), VariableValue::Integer(bv)) => av.cmp(bv),
-            (VariableValue::Float(av), VariableValue::Integer(bv)) => av
-                .partial_cmp(&(*bv as f64))
-                .unwrap_or(std::cmp::Ordering::Equal),
-            (VariableValue::Integer(av), VariableValue::Float(bv)) => (*av as f64)
-                .partial_cmp(bv)
-                .unwrap_or(std::cmp::Ordering::Equal),
-            (VariableValue::String(av), VariableValue::String(bv)) => av.cmp(bv),
-            (VariableValue::Boolean(av), VariableValue::Boolean(bv)) => av.cmp(bv),
-            _ => std::cmp::Ordering::Equal,
-        }
+        helpers::compare_values(a, b)
     }
 
     fn compute_math(
@@ -2908,133 +2883,21 @@ impl Interpreter {
         op_f: fn(f64, f64) -> f64,
         op_i: fn(i64, i64) -> i64,
     ) -> anyhow::Result<VariableValue> {
-        match (a, b) {
-            (VariableValue::Float(av), VariableValue::Float(bv)) => {
-                Ok(VariableValue::Float(op_f(av, bv)))
-            }
-            (VariableValue::Integer(av), VariableValue::Integer(bv)) => {
-                Ok(VariableValue::Integer(op_i(av, bv)))
-            }
-            (VariableValue::Float(av), VariableValue::Integer(bv)) => {
-                Ok(VariableValue::Float(op_f(av, bv as f64)))
-            }
-            (VariableValue::Integer(av), VariableValue::Float(bv)) => {
-                Ok(VariableValue::Float(op_f(av as f64, bv)))
-            }
-            _ => Ok(VariableValue::None),
-        }
+        helpers::compute_math(a, b, op_f, op_i)
     }
 
-    // === Module H: JSON Conversion Helpers ===
-
-    /// Convert serde_json::Value to VariableValue
     fn json_to_variable_value(value: &serde_json::Value) -> VariableValue {
-        match value {
-            serde_json::Value::Null => VariableValue::None,
-            serde_json::Value::Bool(b) => VariableValue::Boolean(*b),
-            serde_json::Value::Number(n) => {
-                if let Some(i) = n.as_i64() {
-                    VariableValue::Integer(i)
-                } else if let Some(f) = n.as_f64() {
-                    VariableValue::Float(f)
-                } else {
-                    VariableValue::None
-                }
-            }
-            serde_json::Value::String(s) => VariableValue::String(s.clone()),
-            serde_json::Value::Array(arr) => {
-                let values: Vec<VariableValue> = arr
-                    .iter()
-                    .map(|v| Self::json_to_variable_value(v))
-                    .collect();
-                VariableValue::Array(values)
-            }
-            serde_json::Value::Object(obj) => {
-                // Convert object to JSON string for now (can be extended later)
-                VariableValue::String(serde_json::to_string(obj).unwrap_or_default())
-            }
-        }
+        json_helpers::json_to_variable_value(value)
     }
 
-    /// Convert VariableValue to serde_json::Value
     fn variable_value_to_json(value: &VariableValue) -> serde_json::Value {
-        match value {
-            VariableValue::None => serde_json::Value::Null,
-            VariableValue::Boolean(b) => serde_json::Value::Bool(*b),
-            VariableValue::Integer(i) => serde_json::json!(*i),
-            VariableValue::Float(f) => serde_json::json!(*f),
-            VariableValue::String(s) => serde_json::Value::String(s.clone()),
-            VariableValue::Vector3(x, y, z) => serde_json::json!([x, y, z]),
-            VariableValue::Array(arr) => {
-                let values: Vec<serde_json::Value> = arr
-                    .iter()
-                    .map(|v| Self::variable_value_to_json(v))
-                    .collect();
-                serde_json::Value::Array(values)
-            }
-        }
+        json_helpers::variable_value_to_json(value)
     }
 
-    // === Module A: Desktop Input Automation Helpers ===
-
-    /// Convert a string key name to an enigo Key variant
     fn string_to_key(key_str: &str) -> Option<Key> {
-        match key_str.to_lowercase().as_str() {
-            // Modifier keys
-            "shift" | "lshift" => Some(Key::Shift),
-            "control" | "ctrl" | "lcontrol" => Some(Key::Control),
-            "alt" | "option" | "lalt" => Some(Key::Alt),
-            "meta" | "command" | "cmd" | "win" | "super" => Some(Key::Meta),
-
-            // Function keys
-            "f1" => Some(Key::F1),
-            "f2" => Some(Key::F2),
-            "f3" => Some(Key::F3),
-            "f4" => Some(Key::F4),
-            "f5" => Some(Key::F5),
-            "f6" => Some(Key::F6),
-            "f7" => Some(Key::F7),
-            "f8" => Some(Key::F8),
-            "f9" => Some(Key::F9),
-            "f10" => Some(Key::F10),
-            "f11" => Some(Key::F11),
-            "f12" => Some(Key::F12),
-
-            // Navigation keys
-            "up" | "uparrow" => Some(Key::UpArrow),
-            "down" | "downarrow" => Some(Key::DownArrow),
-            "left" | "leftarrow" => Some(Key::LeftArrow),
-            "right" | "rightarrow" => Some(Key::RightArrow),
-            "home" => Some(Key::Home),
-            "end" => Some(Key::End),
-            "pageup" | "pgup" => Some(Key::PageUp),
-            "pagedown" | "pgdn" => Some(Key::PageDown),
-
-            // Special keys
-            "return" | "enter" => Some(Key::Return),
-            "escape" | "esc" => Some(Key::Escape),
-            "tab" => Some(Key::Tab),
-            "backspace" | "back" => Some(Key::Backspace),
-            "delete" | "del" => Some(Key::Delete),
-            "space" | " " => Some(Key::Space),
-            "capslock" | "caps" => Some(Key::CapsLock),
-
-            // If single character, return as Unicode key
-            _ if key_str.len() == 1 => key_str.chars().next().map(Key::Unicode),
-
-            // Unknown key
-            _ => None,
-        }
+        helpers::string_to_key(key_str)
     }
 
-    // === Module D: Image Recognition Helper ===
-
-    /// Find a template image within a screen image using optimized multi-stage matching.
-    /// Find a template image within a screen image using robust matching.
-    /// Uses Rayon for parallel processing.
-    /// Implements Multi-Scale search:
-    /// 1. Searches at 1.0x scale (exact match)
-    /// 2. If screen is Retina (>2000px), also searches at 0.5x scale (downscaled screen)
     fn find_template_in_image(
         screen: &image::RgbaImage,
         template: &image::RgbaImage,
@@ -3044,153 +2907,11 @@ impl Interpreter {
         region_w: u32,
         region_h: u32,
     ) -> (i64, i64, bool) {
-        let tpl_w = template.width();
-        let tpl_h = template.height();
-
-        if tpl_w == 0 || tpl_h == 0 {
-            return (0, 0, false);
-        }
-
-        // Helper function for parallel search on a specific screen buffer
-        let search_on_buffer = |search_screen: &image::RgbaImage, scale: u32| -> Option<(i64, i64)> {
-            let scr_w = search_screen.width();
-            let scr_h = search_screen.height();
-
-            // Adjust region for current scale
-            let r_x = region_x / scale;
-            let r_y = region_y / scale;
-            let r_w = region_w / scale;
-            let r_h = region_h / scale;
-
-            let end_x = (r_x + r_w).min(scr_w).saturating_sub(tpl_w);
-            let end_y = (r_y + r_h).min(scr_h).saturating_sub(tpl_h);
-
-            if r_x > end_x || r_y > end_y {
-                return None;
-            }
-
-            let found = (r_y..=end_y).into_par_iter().find_map_first(|sy| {
-                for sx in r_x..=end_x {
-                    // Check if this position matches
-                    let mut matches = true;
-                    // Optimization: Check center pixel first
-                    let center_pixel = search_screen.get_pixel(sx + tpl_w/2, sy + tpl_h/2);
-                    let tpl_center = template.get_pixel(tpl_w/2, tpl_h/2);
-                    if tpl_center[3] >= 128 {
-                         let dr = (center_pixel[0] as i32 - tpl_center[0] as i32).abs();
-                         let dg = (center_pixel[1] as i32 - tpl_center[1] as i32).abs();
-                         let db = (center_pixel[2] as i32 - tpl_center[2] as i32).abs();
-                         if dr > tolerance || dg > tolerance || db > tolerance {
-                             continue;
-                         }
-                    }
-
-                    // Full check
-                    for ty in 0..tpl_h {
-                        for tx in 0..tpl_w {
-                            let tpl_pixel = template.get_pixel(tx, ty);
-                            if tpl_pixel[3] < 128 { continue; }
-
-                            let scr_pixel = search_screen.get_pixel(sx + tx, sy + ty);
-                            let dr = (scr_pixel[0] as i32 - tpl_pixel[0] as i32).abs();
-                            let dg = (scr_pixel[1] as i32 - tpl_pixel[1] as i32).abs();
-                            let db = (scr_pixel[2] as i32 - tpl_pixel[2] as i32).abs();
-
-                            if dr > tolerance || dg > tolerance || db > tolerance {
-                                matches = false;
-                                break;
-                            }
-                        }
-                        if !matches { break; }
-                    }
-
-                    if matches {
-                        return Some((sx, sy));
-                    }
-                }
-                None
-            });
-            
-             found.map(|(x, y)| {
-                let final_x = (x * scale) as i64 + (tpl_w * scale / 2) as i64;
-                let final_y = (y * scale) as i64 + (tpl_h * scale / 2) as i64;
-                (final_x, final_y)
-            })
-        };
-
-        // Pass 1: Try exact match (Scale 1x)
-        if let Some((x, y)) = search_on_buffer(screen, 1) {
-            // If screen > 2000, we are in Physical pixels.
-            // But output should be Logical for UI/Enigo.
-            // If Pass 1 matched on Retina, it means Template was also Physical (xcap).
-            // So we must divide result by 2 to get Logical.
-            if screen.width() > 2000 {
-                return (x / 2, y / 2, true);
-            }
-             return (x, y, true);
-        }
-
-        // Pass 2: Try Downscaled match (Scale 2x)
-        // Cases handled:
-        // - Retina screen (@2x), Template @1x (e.g. from screencapture)
-        if screen.width() > 2000 {
-            // Downscale screen by 2x
-            let new_w = screen.width() / 2;
-            let new_h = screen.height() / 2;
-            let downscaled = image::imageops::resize(
-                screen, 
-                new_w, 
-                new_h, 
-                image::imageops::FilterType::Triangle
-            );
-            
-            if let Some((x, y)) = search_on_buffer(&downscaled, 2) {
-                return (x, y, true);
-            }
-        }
-
-        (0, 0, false)
+        image_matching::find_template_in_image(screen, template, tolerance, region_x, region_y, region_w, region_h)
     }
 
-    /// Compare two images and return similarity score (0.0 - 1.0), considering tolerance
     fn compare_images(img1: &image::RgbaImage, img2: &image::RgbaImage, tolerance: i32) -> f64 {
-        // If sizes don't match, return 0
-        if img1.width() != img2.width() || img1.height() != img2.height() {
-            return 0.0;
-        }
-
-        let total_pixels = (img1.width() * img1.height()) as f64;
-        if total_pixels == 0.0 {
-            return 0.0;
-        }
-
-        let mut matching_pixels = 0u64;
-
-        // Sample for performance on large images
-        let sample_step = 1u32.max((total_pixels as u32 / 10000).max(1));
-        let mut sampled = 0u64;
-
-        for y in (0..img1.height()).step_by(sample_step as usize) {
-            for x in (0..img1.width()).step_by(sample_step as usize) {
-                let p1 = img1.get_pixel(x, y);
-                let p2 = img2.get_pixel(x, y);
-
-                let dr = (p1[0] as i32 - p2[0] as i32).abs();
-                let dg = (p1[1] as i32 - p2[1] as i32).abs();
-                let db = (p1[2] as i32 - p2[2] as i32).abs();
-
-                if dr <= tolerance && dg <= tolerance && db <= tolerance {
-                    matching_pixels += 1;
-                }
-                sampled += 1;
-            }
-        }
-
-        if sampled == 0 {
-            return 0.0;
-        }
-
-        (matching_pixels as f64) / (sampled as f64)
+        image_matching::compare_images(img1, img2, tolerance)
     }
 }
 

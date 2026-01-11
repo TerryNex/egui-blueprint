@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] - 2026-01-11
 
+### Refactored
+
+- **Code Modularization for AI Analyzability** (Agent: Antigravity):
+  - **Executor Module** (`src/executor/`):
+    - Created `helpers.rs` - Value conversion utilities (to_bool, to_float, to_string, compare_values, compute_math, string_to_key)
+    - Created `json_helpers.rs` - JSON conversion functions (json_to_variable_value, variable_value_to_json)
+    - Created `image_matching.rs` - Template matching algorithms (find_template_in_image, compare_images)
+    - Added comprehensive module documentation headers
+    - Reduced `mod.rs` from 3200 to ~2900 lines
+  - **Editor Module** (`src/editor/`):
+    - Created `utils.rs` - Geometry utilities (hit_test_bezier, distance_to_segment, draw_dashed_line) and color helpers (get_type_color, lerp_color)
+    - Added comprehensive module documentation headers
+    - Reduced `mod.rs` from 2683 to ~2615 lines
+  - All new modules include detailed documentation for AI to understand purpose without reading full implementations
+
 ### Added
 
 - **String Extraction Nodes** (Agent: Antigravity):

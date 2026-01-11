@@ -1,6 +1,19 @@
+//! # Graph Editor
+//!
+//! This module provides the visual node-based graph editor.
+//!
+//! ## Submodules
+//! - [`node_ports`]: Port definitions for all node types
+//! - [`style`]: Editor styling and clipboard data
+//! - [`utils`]: Geometry, color, and rendering utilities
+//!
+//! ## Main Type
+//! [`GraphEditor`] - The main graph editor widget
+
 // Submodules
 pub mod node_ports;
 pub mod style;
+pub mod utils;
 
 // Re-exports for backwards compatibility
 pub use style::{ClipboardData, EditorStyle, HTTP_METHODS, VALID_BUTTONS, VALID_KEYS};
@@ -2388,53 +2401,15 @@ impl GraphEditor {
     }
 
     fn get_type_color(&self, dt: &DataType) -> Color32 {
-        match dt {
-            DataType::ExecutionFlow => Color32::WHITE,
-            DataType::Boolean => Color32::RED,
-            DataType::Float => Color32::GREEN,
-            DataType::Integer => Color32::LIGHT_BLUE,
-            DataType::String => Color32::KHAKI,
-            DataType::Vector3 => Color32::YELLOW,
-            DataType::Array => Color32::from_rgb(255, 165, 0), // Orange for arrays
-            DataType::Custom(_) => Color32::GRAY,
-        }
+        utils::get_type_color(dt)
     }
 
     fn hit_test_bezier(&self, pos: Pos2, p1: Pos2, p2: Pos2, threshold: f32) -> bool {
-        let p1_vec = p1.to_vec2();
-        let p2_vec = p2.to_vec2();
-        let control_scale = (p2_vec.x - p1_vec.x).abs().max(50.0) * 0.5;
-        let c1 = Pos2::new(p1.x + control_scale, p1.y);
-        let c2 = Pos2::new(p2.x - control_scale, p2.y);
-
-        let steps = 20;
-        let mut prev = p1;
-        for i in 1..=steps {
-            let t = i as f32 / steps as f32;
-            let t_inv = 1.0 - t;
-            let current = (t_inv.powi(3) * p1.to_vec2()
-                + 3.0 * t_inv.powi(2) * t * c1.to_vec2()
-                + 3.0 * t_inv * t.powi(2) * c2.to_vec2()
-                + t.powi(3) * p2.to_vec2())
-            .to_pos2();
-
-            if self.distance_to_segment(pos, prev, current) < threshold {
-                return true;
-            }
-            prev = current;
-        }
-        false
+        utils::hit_test_bezier(pos, p1, p2, threshold)
     }
 
     fn distance_to_segment(&self, p: Pos2, a: Pos2, b: Pos2) -> f32 {
-        let ab = b - a;
-        if ab.length_sq() < 1e-6 {
-            return p.distance(a);
-        }
-        let ap = p - a;
-        let t = (ap.dot(ab) / ab.length_sq()).clamp(0.0, 1.0);
-        let closest = a + ab * t;
-        p.distance(closest)
+        utils::distance_to_segment(p, a, b)
     }
 
     fn draw_dashed_line(
@@ -2445,29 +2420,7 @@ impl GraphEditor {
         gap_length: f32,
         stroke: Stroke,
     ) {
-        let dir = end - start;
-        let total_length = dir.length();
-        if total_length < 0.001 {
-            return;
-        }
-
-        let unit = dir / total_length;
-        let mut pos = 0.0;
-        let mut drawing = true;
-
-        while pos < total_length {
-            let segment_length = if drawing { dash_length } else { gap_length };
-            let segment_end = (pos + segment_length).min(total_length);
-
-            if drawing {
-                let p1 = start + unit * pos;
-                let p2 = start + unit * segment_end;
-                painter.line_segment([p1, p2], stroke);
-            }
-
-            pos = segment_end;
-            drawing = !drawing;
-        }
+        utils::draw_dashed_line(painter, start, end, dash_length, gap_length, stroke);
     }
 
     fn draw_groups(
