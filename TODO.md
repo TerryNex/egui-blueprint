@@ -41,11 +41,11 @@
 
 ### Output Log
 
-- [ ] **Export log to file** - Allow saving debug logs
-  - [ ] Add "Export" button to Output Log window
-  - [ ] Option to choose save location
-  - [ ] Quick export to Desktop option
-  - [ ] Include timestamp in exported filename
+- [x] **Export log to file** - Allow saving debug logs
+  - [x] Add "Export" button to Output Log window
+  - [x] Option to choose save location (scripts/logs/)
+  - [x] Quick export to Desktop option
+  - [x] Include timestamp in exported filename
 
 ---
 

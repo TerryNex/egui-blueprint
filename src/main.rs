@@ -752,6 +752,37 @@ impl eframe::App for MyApp {
                     if ui.button("Clear").clicked() {
                         self.logs.clear();
                     }
+                    ui.separator();
+                    
+                    // Export to scripts/logs/
+                    if ui.button("📁 Export").on_hover_text("Export to scripts/logs/").clicked() {
+                        let _ = std::fs::create_dir_all("scripts/logs");
+                        let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
+                        let filename = format!("scripts/logs/log_{}.txt", timestamp);
+                        let content = self.logs.join("\n");
+                        match std::fs::write(&filename, &content) {
+                            Ok(_) => self.logs.push(format!("[System] Exported to {}", filename)),
+                            Err(e) => self.logs.push(format!("[Error] Export failed: {}", e)),
+                        }
+                    }
+                    
+                    // Quick export to Desktop
+                    if ui.button("🖥 Desktop").on_hover_text("Export to Desktop").clicked() {
+                        if let Some(home) = dirs::home_dir() {
+                            let desktop = home.join("Desktop");
+                            let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
+                            let filename = desktop.join(format!("egui_blueprint_log_{}.txt", timestamp));
+                            let content = self.logs.join("\n");
+                            match std::fs::write(&filename, &content) {
+                                Ok(_) => self.logs.push(format!("[System] Exported to {:?}", filename)),
+                                Err(e) => self.logs.push(format!("[Error] Export failed: {}", e)),
+                            }
+                        } else {
+                            self.logs.push("[Error] Could not find home directory".to_string());
+                        }
+                    }
+                    
+                    ui.separator();
                     ui.label(format!("Count: {}", self.logs.len()));
                 });
                 ui.separator();

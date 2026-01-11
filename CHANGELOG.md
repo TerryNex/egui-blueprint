@@ -23,6 +23,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Export Log to File** (Agent: Antigravity):
+  - 📁 Export button saves logs to `scripts/logs/` with timestamped filename
+  - 🖥 Desktop button for quick export directly to Desktop
+  - Uses `dirs` crate for cross-platform home directory detection
+  - Log entries formatted with timestamps
+
+### Improved
+
 - **String Extraction Nodes** (Agent: Antigravity):
   - `ExtractAfter` - Extract N characters after a keyword (Source, Keyword, Length → Result, Found)
   - `ExtractUntil` - Extract content from keyword until delimiter (Source, Keyword, Delimiter → Result, Found)

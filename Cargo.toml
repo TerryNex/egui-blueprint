@@ -28,3 +28,5 @@ sysinfo = "0.35"
 rdev = { git = "https://github.com/rustdesk-org/rdev", branch = "master" }
 crossbeam-channel = "0.5"
 rayon = "1.11.0"
+# Home directory detection (for log export)
+dirs = "5.0"
