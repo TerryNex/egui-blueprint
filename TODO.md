@@ -35,9 +35,9 @@
   - [ ] Ensure Nodes List window uses category colors
   - [ ] Use pure colors (red, yellow, blue, green, cyan, purple) with transparency variations
 
-- [ ] **Style settings reset** - Add reset button to restore default colors
-  - [ ] Store default style configuration
-  - [ ] Add "Reset to Defaults" button in Style Settings window
+- [x] **Style settings reset** - Add reset button to restore default colors
+  - [x] Store default style configuration (EditorStyle::default())
+  - [x] Add "Reset to Defaults" button in Style Settings window
 
 ### Output Log
 

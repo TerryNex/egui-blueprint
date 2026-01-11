@@ -28,6 +28,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - 🖥 Desktop button for quick export directly to Desktop
   - Uses `dirs` crate for cross-platform home directory detection
   - Log entries formatted with timestamps
+- **Style Settings Window** (Agent: Antigravity):
+  - New 🎨 Style button in toolbar opens Style Settings window
+  - Font size slider (8-24px)
+  - Gradient connections toggle
+  - Node header color pickers for all categories
+  - 💾 Save button to persist settings
+  - 🔄 Reset to Defaults button to restore all style settings
 
 ### Improved
 

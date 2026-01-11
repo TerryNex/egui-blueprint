@@ -59,6 +59,7 @@ struct MyApp {
     nodes_search_filter: String,
     nodes_sort_mode: u8, // 0 = default, 1 = alphabetical, 2 = by type
     last_event_time: Option<std::time::Instant>,
+    show_style_window: bool,
 }
 
 impl Default for MyApp {
@@ -84,6 +85,7 @@ impl Default for MyApp {
             nodes_search_filter: String::new(),
             nodes_sort_mode: 0,
             last_event_time: None,
+            show_style_window: false,
         };
         let _ = std::fs::create_dir_all("scripts");
         // Load settings first (may auto-load last script)
@@ -402,6 +404,9 @@ impl eframe::App for MyApp {
                 if ui.button("Debug").clicked() {
                     self.show_debug_window = !self.show_debug_window;
                 }
+                if ui.button("🎨 Style").clicked() {
+                    self.show_style_window = !self.show_style_window;
+                }
 
                 ui.separator();
                 let is_recording = self.editor.recorder.is_recording();
@@ -674,6 +679,54 @@ impl eframe::App for MyApp {
                     ui.label(format!("Nodes: {}", self.graph.nodes.len()));
                     ui.label(format!("Connections: {}", self.graph.connections.len()));
                     ui.label(format!("Groups: {}", self.graph.groups.len()));
+                });
+        }
+
+        // Style Settings Window
+        if self.show_style_window {
+            egui::Window::new("🎨 Style Settings")
+                .open(&mut self.show_style_window)
+                .resizable(true)
+                .default_width(300.0)
+                .show(ctx, |ui| {
+                    ui.heading("Display Settings");
+                    ui.horizontal(|ui| {
+                        ui.label("Font Size:");
+                        ui.add(egui::Slider::new(&mut self.editor.style.font_size, 8.0..=24.0).suffix("px"));
+                    });
+                    ui.checkbox(&mut self.editor.style.use_gradient_connections, "Gradient Connections");
+                    ui.separator();
+                    
+                    ui.heading("Node Header Colors");
+                    egui::ScrollArea::vertical()
+                        .max_height(200.0)
+                        .show(ui, |ui| {
+                            let categories: Vec<String> = self.editor.style.header_colors.keys().cloned().collect();
+                            for category in categories {
+                                if let Some(color) = self.editor.style.header_colors.get_mut(&category) {
+                                    ui.horizontal(|ui| {
+                                        let mut rgb = [color.r(), color.g(), color.b()];
+                                        if ui.color_edit_button_srgb(&mut rgb).changed() {
+                                            *color = egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
+                                        }
+                                        ui.label(&category);
+                                    });
+                                }
+                            }
+                        });
+                    
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        if ui.button("💾 Save").clicked() {
+                            self.save_settings();
+                            self.logs.push("[System] Style settings saved".to_string());
+                        }
+                        if ui.button("🔄 Reset to Defaults").clicked() {
+                            self.editor.style = editor::EditorStyle::default();
+                            self.save_settings();
+                            self.logs.push("[System] Style reset to defaults".to_string());
+                        }
+                    });
                 });
         }
 
