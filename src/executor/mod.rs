@@ -1,6 +1,15 @@
+// Submodules
+pub mod automation;
+pub mod context;
+pub mod flow_control;
+pub mod image_recognition;
+pub mod node_eval;
+pub mod type_conversions;
+
 use crate::graph::{BlueprintGraph, Node, VariableValue};
 use crate::node_types::NodeType;
 use enigo::{Button, Coordinate, Direction, Enigo, Key, Keyboard, Mouse, Settings};
+use rayon::prelude::*;
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
@@ -79,7 +88,7 @@ impl Interpreter {
         rx
     }
 
-    fn execute_flow(
+    pub fn execute_flow(
         graph: Arc<BlueprintGraph>,
         start_id: Uuid,
         context: Arc<Mutex<ExecutionContext>>,
@@ -100,6 +109,10 @@ impl Interpreter {
 
         let mut steps = 0;
         let max_steps = 5000;
+        let mut enigo = Enigo::new(&Settings::default()).ok(); // Initial attempt
+        if enigo.is_none() {
+             logger("Warning: Failed to initialize Input Simulator (Enigo). Mouse/Keyboard actions will fail.".into());
+        }
 
         while steps < max_steps {
             let node = match graph.nodes.get(&current_node_id) {
@@ -453,15 +466,16 @@ impl Interpreter {
 
                     {
                         let mut ctx = context.lock().unwrap();
+                        let node_id_str = current_node_id.to_string();
                         match result {
                             Ok(output) => {
                                 let response = String::from_utf8_lossy(&output.stdout).to_string();
                                 ctx.variables.insert(
-                                    "__http_response".into(),
+                                    format!("__out_{}_Response", node_id_str),
                                     VariableValue::String(response.clone()),
                                 );
                                 ctx.variables.insert(
-                                    "__http_success".into(),
+                                    format!("__out_{}_Success", node_id_str),
                                     VariableValue::Boolean(output.status.success()),
                                 );
                                 logger(format!(
@@ -471,11 +485,13 @@ impl Interpreter {
                             }
                             Err(e) => {
                                 ctx.variables.insert(
-                                    "__http_response".into(),
+                                    format!("__out_{}_Response", node_id_str),
                                     VariableValue::String("".into()),
                                 );
-                                ctx.variables
-                                    .insert("__http_success".into(), VariableValue::Boolean(false));
+                                ctx.variables.insert(
+                                    format!("__out_{}_Success", node_id_str),
+                                    VariableValue::Boolean(false),
+                                );
                                 logger(format!("HTTPRequest: Error - {}", e));
                             }
                         }
@@ -507,12 +523,11 @@ impl Interpreter {
 
                     logger(format!("Click: ({}, {})", x, y));
 
-                    match Enigo::new(&Settings::default()) {
-                        Ok(mut enigo) => {
-                            let _ = enigo.move_mouse(x, y, Coordinate::Abs);
-                            let _ = enigo.button(Button::Left, Direction::Click);
-                        }
-                        Err(e) => logger(format!("Click Error: {}", e)),
+                    if let Some(enigo) = &mut enigo {
+                        let _ = enigo.move_mouse(x, y, Coordinate::Abs);
+                        let _ = enigo.button(Button::Left, Direction::Click);
+                    } else {
+                        logger("Click Error: Enigo not initialized".into());
                     }
 
                     if let Some(next) = Self::follow_flow(&graph, current_node_id, "Next") {
@@ -540,13 +555,12 @@ impl Interpreter {
 
                     logger(format!("DoubleClick: ({}, {})", x, y));
 
-                    match Enigo::new(&Settings::default()) {
-                        Ok(mut enigo) => {
-                            let _ = enigo.move_mouse(x, y, Coordinate::Abs);
-                            let _ = enigo.button(Button::Left, Direction::Click);
-                            let _ = enigo.button(Button::Left, Direction::Click);
-                        }
-                        Err(e) => logger(format!("DoubleClick Error: {}", e)),
+                    if let Some(enigo) = &mut enigo {
+                        let _ = enigo.move_mouse(x, y, Coordinate::Abs);
+                        let _ = enigo.button(Button::Left, Direction::Click);
+                        let _ = enigo.button(Button::Left, Direction::Click);
+                    } else {
+                         logger("DoubleClick Error: Enigo not initialized".into());
                     }
 
                     if let Some(next) = Self::follow_flow(&graph, current_node_id, "Next") {
@@ -574,12 +588,11 @@ impl Interpreter {
 
                     logger(format!("RightClick: ({}, {})", x, y));
 
-                    match Enigo::new(&Settings::default()) {
-                        Ok(mut enigo) => {
-                            let _ = enigo.move_mouse(x, y, Coordinate::Abs);
-                            let _ = enigo.button(Button::Right, Direction::Click);
-                        }
-                        Err(e) => logger(format!("RightClick Error: {}", e)),
+                    if let Some(enigo) = &mut enigo {
+                        let _ = enigo.move_mouse(x, y, Coordinate::Abs);
+                        let _ = enigo.button(Button::Right, Direction::Click);
+                    } else {
+                        logger("RightClick Error: Enigo not initialized".into());
                     }
 
                     if let Some(next) = Self::follow_flow(&graph, current_node_id, "Next") {
@@ -607,11 +620,10 @@ impl Interpreter {
 
                     logger(format!("MouseMove: ({}, {})", x, y));
 
-                    match Enigo::new(&Settings::default()) {
-                        Ok(mut enigo) => {
-                            let _ = enigo.move_mouse(x, y, Coordinate::Abs);
-                        }
-                        Err(e) => logger(format!("MouseMove Error: {}", e)),
+                    if let Some(enigo) = &mut enigo {
+                        let _ = enigo.move_mouse(x, y, Coordinate::Abs);
+                    } else {
+                        logger("MouseMove Error: Enigo not initialized".into());
                     }
 
                     if let Some(next) = Self::follow_flow(&graph, current_node_id, "Next") {
@@ -633,30 +645,42 @@ impl Interpreter {
                         _ => Button::Left,
                     };
 
-                    // Move to X/Y coordinates first
-                    let x = Self::evaluate_input(&graph, current_node_id, "X", &context)
-                        .map(|v| match v {
-                            VariableValue::Integer(i) => i as i32,
-                            VariableValue::Float(f) => f as i32,
-                            _ => 0,
-                        })
-                        .unwrap_or(0);
-                    let y = Self::evaluate_input(&graph, current_node_id, "Y", &context)
-                        .map(|v| match v {
-                            VariableValue::Integer(i) => i as i32,
-                            VariableValue::Float(f) => f as i32,
-                            _ => 0,
-                        })
-                        .unwrap_or(0);
+                    let x_val = Self::evaluate_input(&graph, current_node_id, "X", &context).unwrap_or(VariableValue::Integer(0));
+                    let y_val = Self::evaluate_input(&graph, current_node_id, "Y", &context).unwrap_or(VariableValue::Integer(0));
+                    
+                    let x = match x_val {
+                        VariableValue::Integer(i) => i as i32,
+                        VariableValue::Float(f) => f as i32,
+                        _ => 0,
+                    };
+                    let y = match y_val {
+                        VariableValue::Integer(i) => i as i32,
+                        VariableValue::Float(f) => f as i32,
+                        _ => 0,
+                    };
 
-                    logger(format!("MouseDown: {} at ({}, {})", button_str, x, y));
+                    // Check if inputs are connected
+                    let x_connected = graph.connections.iter().any(|c| c.to_node == current_node_id && c.to_port == "X");
+                    let y_connected = graph.connections.iter().any(|c| c.to_node == current_node_id && c.to_port == "Y");
 
-                    match Enigo::new(&Settings::default()) {
-                        Ok(mut enigo) => {
+                    // Move only if inputs are explicitly provided (connected or non-zero)
+                    let should_move = x_connected || y_connected || x != 0 || y != 0;
+
+                    if should_move {
+                        logger(format!("MouseDown: {} at ({}, {})", button_str, x, y));
+                    } else {
+                        logger(format!("MouseDown: {} (Current Position)", button_str));
+                    }
+
+                    if let Some(enigo) = &mut enigo {
+                        if should_move {
                             let _ = enigo.move_mouse(x, y, Coordinate::Abs);
-                            let _ = enigo.button(button, Direction::Press);
+                            // macOS requires a delay after move before press, otherwise events are ignored
+                            std::thread::sleep(std::time::Duration::from_millis(50));
                         }
-                        Err(e) => logger(format!("MouseDown Error: {}", e)),
+                        let _ = enigo.button(button, Direction::Press);
+                    } else {
+                        logger("MouseDown Error: Enigo not initialized".into());
                     }
 
                     if let Some(next) = Self::follow_flow(&graph, current_node_id, "Next") {
@@ -667,7 +691,7 @@ impl Interpreter {
                 }
 
                 NodeType::MouseUp => {
-                    let button_str =
+                     let button_str =
                         Self::evaluate_input(&graph, current_node_id, "Button", &context)
                             .map(|v| Self::to_string(&v))
                             .unwrap_or_else(|_| "left".to_string());
@@ -678,30 +702,42 @@ impl Interpreter {
                         _ => Button::Left,
                     };
 
-                    // Move to X/Y coordinates first
-                    let x = Self::evaluate_input(&graph, current_node_id, "X", &context)
-                        .map(|v| match v {
-                            VariableValue::Integer(i) => i as i32,
-                            VariableValue::Float(f) => f as i32,
-                            _ => 0,
-                        })
-                        .unwrap_or(0);
-                    let y = Self::evaluate_input(&graph, current_node_id, "Y", &context)
-                        .map(|v| match v {
-                            VariableValue::Integer(i) => i as i32,
-                            VariableValue::Float(f) => f as i32,
-                            _ => 0,
-                        })
-                        .unwrap_or(0);
+                    let x_val = Self::evaluate_input(&graph, current_node_id, "X", &context).unwrap_or(VariableValue::Integer(0));
+                    let y_val = Self::evaluate_input(&graph, current_node_id, "Y", &context).unwrap_or(VariableValue::Integer(0));
+                    
+                    let x = match x_val {
+                        VariableValue::Integer(i) => i as i32,
+                        VariableValue::Float(f) => f as i32,
+                        _ => 0,
+                    };
+                    let y = match y_val {
+                        VariableValue::Integer(i) => i as i32,
+                        VariableValue::Float(f) => f as i32,
+                        _ => 0,
+                    };
 
-                    logger(format!("MouseUp: {} at ({}, {})", button_str, x, y));
+                    // Check if inputs are connected
+                    let x_connected = graph.connections.iter().any(|c| c.to_node == current_node_id && c.to_port == "X");
+                    let y_connected = graph.connections.iter().any(|c| c.to_node == current_node_id && c.to_port == "Y");
 
-                    match Enigo::new(&Settings::default()) {
-                        Ok(mut enigo) => {
+                    // Move only if inputs are explicitly provided (connected or non-zero)
+                    let should_move = x_connected || y_connected || x != 0 || y != 0;
+
+                    if should_move {
+                        logger(format!("MouseUp: {} at ({}, {})", button_str, x, y));
+                    } else {
+                        logger(format!("MouseUp: {} (Current Position)", button_str));
+                    }
+
+                    if let Some(enigo) = &mut enigo {
+                        if should_move {
                             let _ = enigo.move_mouse(x, y, Coordinate::Abs);
-                            let _ = enigo.button(button, Direction::Release);
+                            // macOS requires a delay after move before release
+                            std::thread::sleep(std::time::Duration::from_millis(50));
                         }
-                        Err(e) => logger(format!("MouseUp Error: {}", e)),
+                        let _ = enigo.button(button, Direction::Release);
+                    } else {
+                        logger("MouseUp Error: Enigo not initialized".into());
                     }
 
                     if let Some(next) = Self::follow_flow(&graph, current_node_id, "Next") {
@@ -729,12 +765,11 @@ impl Interpreter {
 
                     logger(format!("Scroll: ({}, {})", x, y));
 
-                    match Enigo::new(&Settings::default()) {
-                        Ok(mut enigo) => {
-                            let _ = enigo.scroll(x, enigo::Axis::Horizontal);
-                            let _ = enigo.scroll(y, enigo::Axis::Vertical);
-                        }
-                        Err(e) => logger(format!("Scroll Error: {}", e)),
+                    if let Some(enigo) = &mut enigo {
+                        let _ = enigo.scroll(x, enigo::Axis::Horizontal);
+                        let _ = enigo.scroll(y, enigo::Axis::Vertical);
+                    } else {
+                        logger("Scroll Error: Enigo not initialized".into());
                     }
 
                     if let Some(next) = Self::follow_flow(&graph, current_node_id, "Next") {
@@ -751,21 +786,18 @@ impl Interpreter {
 
                     logger(format!("KeyPress: {}", key_str));
 
-                    match Enigo::new(&Settings::default()) {
-                        Ok(mut enigo) => {
-                            if let Some(key) = Self::string_to_key(&key_str) {
-                                // Use explicit press/release with delay for stability
-                                let _ = enigo.key(key, Direction::Press);
-                                thread::sleep(Duration::from_millis(50));
-                                let _ = enigo.key(key, Direction::Release);
-                            } else {
-                                // If not a special key, type as character
-                                if let Some(c) = key_str.chars().next() {
-                                    let _ = enigo.key(Key::Unicode(c), Direction::Click);
-                                }
+                    if let Some(enigo) = &mut enigo {
+                        if let Some(key) = Self::string_to_key(&key_str) {
+                            let _ = enigo.key(key, Direction::Press);
+                            thread::sleep(Duration::from_millis(50));
+                            let _ = enigo.key(key, Direction::Release);
+                        } else {
+                            if let Some(c) = key_str.chars().next() {
+                                let _ = enigo.key(Key::Unicode(c), Direction::Click);
                             }
                         }
-                        Err(e) => logger(format!("KeyPress Error: {}", e)),
+                    } else {
+                        logger("KeyPress Error: Enigo not initialized".into());
                     }
 
                     if let Some(next) = Self::follow_flow(&graph, current_node_id, "Next") {
@@ -782,17 +814,16 @@ impl Interpreter {
 
                     logger(format!("KeyDown: {}", key_str));
 
-                    match Enigo::new(&Settings::default()) {
-                        Ok(mut enigo) => {
-                            if let Some(key) = Self::string_to_key(&key_str) {
-                                let _ = enigo.key(key, Direction::Press);
-                            } else {
-                                if let Some(c) = key_str.chars().next() {
-                                    let _ = enigo.key(Key::Unicode(c), Direction::Press);
-                                }
+                    if let Some(enigo) = &mut enigo {
+                        if let Some(key) = Self::string_to_key(&key_str) {
+                            let _ = enigo.key(key, Direction::Press);
+                        } else {
+                            if let Some(c) = key_str.chars().next() {
+                                let _ = enigo.key(Key::Unicode(c), Direction::Press);
                             }
                         }
-                        Err(e) => logger(format!("KeyDown Error: {}", e)),
+                    } else {
+                        logger("KeyDown Error: Enigo not initialized".into());
                     }
 
                     if let Some(next) = Self::follow_flow(&graph, current_node_id, "Next") {
@@ -809,17 +840,16 @@ impl Interpreter {
 
                     logger(format!("KeyUp: {}", key_str));
 
-                    match Enigo::new(&Settings::default()) {
-                        Ok(mut enigo) => {
-                            if let Some(key) = Self::string_to_key(&key_str) {
-                                let _ = enigo.key(key, Direction::Release);
-                            } else {
-                                if let Some(c) = key_str.chars().next() {
-                                    let _ = enigo.key(Key::Unicode(c), Direction::Release);
-                                }
+                    if let Some(enigo) = &mut enigo {
+                        if let Some(key) = Self::string_to_key(&key_str) {
+                            let _ = enigo.key(key, Direction::Release);
+                        } else {
+                            if let Some(c) = key_str.chars().next() {
+                                let _ = enigo.key(Key::Unicode(c), Direction::Release);
                             }
                         }
-                        Err(e) => logger(format!("KeyUp Error: {}", e)),
+                    } else {
+                        logger("KeyUp Error: Enigo not initialized".into());
                     }
 
                     if let Some(next) = Self::follow_flow(&graph, current_node_id, "Next") {
@@ -836,11 +866,62 @@ impl Interpreter {
 
                     logger(format!("TypeText: \"{}\"", text));
 
-                    match Enigo::new(&Settings::default()) {
-                        Ok(mut enigo) => {
-                            let _ = enigo.text(&text);
+                    if let Some(enigo) = &mut enigo {
+                         let _ = enigo.text(&text);
+                    } else {
+                         logger("TypeText Error: Enigo not initialized".into());
+                    }
+
+                    if let Some(next) = Self::follow_flow(&graph, current_node_id, "Next") {
+                        current_node_id = next;
+                    } else {
+                        break;
+                    }
+                }
+
+                NodeType::TypeString => {
+                    let text = Self::evaluate_input(&graph, current_node_id, "Text", &context)
+                        .map(|v| Self::to_string(&v))
+                        .unwrap_or_default();
+                    let delay_ms = Self::evaluate_input(&graph, current_node_id, "Delay", &context)
+                        .map(|v| match v {
+                            VariableValue::Integer(i) => i as u64,
+                            VariableValue::Float(f) => f as u64,
+                            _ => 50,
+                        })
+                        .unwrap_or(50);
+
+                    logger(format!("TypeString: \"{}\" (delay: {}ms)", text, delay_ms));
+
+                    if let Some(enigo) = &mut enigo {
+                        for c in text.chars() {
+                            // Handle special characters that need key conversion
+                            let key_pressed = match c {
+                                ' ' => {
+                                    let _ = enigo.key(Key::Space, Direction::Click);
+                                    true
+                                }
+                                '\n' => {
+                                    let _ = enigo.key(Key::Return, Direction::Click);
+                                    true
+                                }
+                                '\t' => {
+                                    let _ = enigo.key(Key::Tab, Direction::Click);
+                                    true
+                                }
+                                _ => {
+                                    // For regular characters, use Unicode key press
+                                    let _ = enigo.key(Key::Unicode(c), Direction::Click);
+                                    true
+                                }
+                            };
+                            
+                            if key_pressed && delay_ms > 0 {
+                                thread::sleep(Duration::from_millis(delay_ms));
+                            }
                         }
-                        Err(e) => logger(format!("TypeText Error: {}", e)),
+                    } else {
+                        logger("TypeString Error: Enigo not initialized".into());
                     }
 
                     if let Some(next) = Self::follow_flow(&graph, current_node_id, "Next") {
@@ -882,48 +963,47 @@ impl Interpreter {
                     }
                     logger(format!("HotKey: {}+{}", modifiers.join("+"), key_str));
 
-                    match Enigo::new(&Settings::default()) {
-                        Ok(mut enigo) => {
-                            // Press modifiers
-                            if ctrl {
-                                let _ = enigo.key(Key::Control, Direction::Press);
-                            }
-                            if shift {
-                                let _ = enigo.key(Key::Shift, Direction::Press);
-                            }
-                            if alt {
-                                let _ = enigo.key(Key::Alt, Direction::Press);
-                            }
-                            if meta {
-                                let _ = enigo.key(Key::Meta, Direction::Press);
-                            }
-
-                            thread::sleep(Duration::from_millis(100)); // Delay for modifiers to register
-
-                            // Press the main key
-                            if let Some(key) = Self::string_to_key(&key_str) {
-                                let _ = enigo.key(key, Direction::Click);
-                            } else if let Some(c) = key_str.chars().next() {
-                                let _ = enigo.key(Key::Unicode(c), Direction::Click);
-                            }
-
-                            thread::sleep(Duration::from_millis(50)); // Delay after click
-
-                            // Release modifiers (in reverse order)
-                            if meta {
-                                let _ = enigo.key(Key::Meta, Direction::Release);
-                            }
-                            if alt {
-                                let _ = enigo.key(Key::Alt, Direction::Release);
-                            }
-                            if shift {
-                                let _ = enigo.key(Key::Shift, Direction::Release);
-                            }
-                            if ctrl {
-                                let _ = enigo.key(Key::Control, Direction::Release);
-                            }
+                    // Refactored HotKey to reuse enigo instance
+                    if let Some(enigo) = &mut enigo {
+                        // Press modifiers
+                        if ctrl {
+                            let _ = enigo.key(Key::Control, Direction::Press);
                         }
-                        Err(e) => logger(format!("HotKey Error: {}", e)),
+                        if shift {
+                            let _ = enigo.key(Key::Shift, Direction::Press);
+                        }
+                        if alt {
+                            let _ = enigo.key(Key::Alt, Direction::Press);
+                        }
+                        if meta {
+                            let _ = enigo.key(Key::Meta, Direction::Press);
+                        }
+
+                        thread::sleep(Duration::from_millis(100));
+
+                        if let Some(key) = Self::string_to_key(&key_str) {
+                            let _ = enigo.key(key, Direction::Click);
+                        } else if let Some(c) = key_str.chars().next() {
+                            let _ = enigo.key(Key::Unicode(c), Direction::Click);
+                        }
+
+                        thread::sleep(Duration::from_millis(50));
+
+                        // Release modifiers (in reverse order)
+                        if meta {
+                            let _ = enigo.key(Key::Meta, Direction::Release);
+                        }
+                        if alt {
+                            let _ = enigo.key(Key::Alt, Direction::Release);
+                        }
+                        if shift {
+                            let _ = enigo.key(Key::Shift, Direction::Release);
+                        }
+                        if ctrl {
+                            let _ = enigo.key(Key::Control, Direction::Release);
+                        }
+                    } else {
+                        logger("HotKey Error: Enigo not initialized".into());
                     }
 
                     if let Some(next) = Self::follow_flow(&graph, current_node_id, "Next") {
@@ -1070,6 +1150,21 @@ impl Interpreter {
                             VariableValue::Boolean(success),
                         );
                     }
+
+                    if let Some(next) = Self::follow_flow(&graph, current_node_id, "Next") {
+                        current_node_id = next;
+                    } else {
+                        break;
+                    }
+                }
+
+                NodeType::GetWindowPosition => {
+                    // Trigger evaluation to cache results
+                   if let Some(node) = graph.nodes.get(&current_node_id) {
+                        let _ = Self::evaluate_node(&graph, node, "X", &context);
+                   }
+                    
+                    logger("GetWindowPosition: Executed".to_string());
 
                     if let Some(next) = Self::follow_flow(&graph, current_node_id, "Next") {
                         current_node_id = next;
@@ -1411,6 +1506,126 @@ impl Interpreter {
                     }
                 }
 
+                NodeType::RegionCapture => {
+                    let x = Self::evaluate_input(&graph, current_node_id, "X", &context)
+                        .map(|v| Self::to_float(&v) as u32)
+                        .unwrap_or(0);
+                    let y = Self::evaluate_input(&graph, current_node_id, "Y", &context)
+                        .map(|v| Self::to_float(&v) as u32)
+                        .unwrap_or(0);
+                    let width = Self::evaluate_input(&graph, current_node_id, "Width", &context)
+                        .map(|v| Self::to_float(&v) as u32)
+                        .unwrap_or(200);
+                    let height = Self::evaluate_input(&graph, current_node_id, "Height", &context)
+                        .map(|v| Self::to_float(&v) as u32)
+                        .unwrap_or(100);
+                    let custom_filename =
+                        Self::evaluate_input(&graph, current_node_id, "Filename", &context)
+                            .map(|v| Self::to_string(&v))
+                            .unwrap_or_default();
+
+                    logger(format!(
+                        "RegionCapture: ({},{}) {}x{}",
+                        x, y, width, height
+                    ));
+
+                    // Ensure templates directory exists
+                    let _ = std::fs::create_dir_all("scripts/templates");
+
+                    // Capture screen and crop to region
+                    let (success, image_path) = match Monitor::all() {
+                        Ok(monitors) => {
+                            if let Some(monitor) = monitors.first() {
+                                match monitor.capture_image() {
+                                    Ok(full_image) => {
+                                        // Validate bounds
+                                        let img_width = full_image.width();
+                                        let img_height = full_image.height();
+                                        
+                                        if x >= img_width || y >= img_height {
+                                            logger(format!(
+                                                "RegionCapture: Start position ({},{}) out of bounds ({}x{})",
+                                                x, y, img_width, img_height
+                                            ));
+                                            (false, String::new())
+                                        } else {
+                                            // Clamp width/height to image bounds
+                                            let crop_width = width.min(img_width - x);
+                                            let crop_height = height.min(img_height - y);
+                                            
+                                            // Crop the image
+                                            let cropped = image::imageops::crop_imm(
+                                                &full_image, x, y, crop_width, crop_height
+                                            ).to_image();
+                                            
+                                            // Generate filename
+                                            let filename = if custom_filename.is_empty() {
+                                                let timestamp = chrono::Local::now()
+                                                    .format("%Y%m%d_%H%M%S_%3f");
+                                                format!("scripts/templates/region_{}.png", timestamp)
+                                            } else if custom_filename.contains('/') || custom_filename.contains('\\') {
+                                                // User provided full path
+                                                custom_filename.clone()
+                                            } else {
+                                                // Just filename, put in templates folder
+                                                format!("scripts/templates/{}", custom_filename)
+                                            };
+                                            
+                                            // Save cropped image
+                                            match cropped.save(&filename) {
+                                                Ok(_) => {
+                                                    logger(format!(
+                                                        "RegionCapture: Saved {}x{} to {}",
+                                                        crop_width, crop_height, filename
+                                                    ));
+                                                    (true, filename)
+                                                }
+                                                Err(e) => {
+                                                    logger(format!(
+                                                        "RegionCapture: Save error - {}",
+                                                        e
+                                                    ));
+                                                    (false, String::new())
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        logger(format!("RegionCapture: Capture error - {}", e));
+                                        (false, String::new())
+                                    }
+                                }
+                            } else {
+                                logger("RegionCapture: No monitors found".to_string());
+                                (false, String::new())
+                            }
+                        }
+                        Err(e) => {
+                            logger(format!("RegionCapture: Monitor error - {}", e));
+                            (false, String::new())
+                        }
+                    };
+
+                    {
+                        let mut ctx = context.lock().unwrap();
+                        let node_id_str = current_node_id.to_string();
+                        ctx.variables.insert(
+                            format!("__out_{}_ImagePath", node_id_str),
+                            VariableValue::String(image_path),
+                        );
+                        ctx.variables.insert(
+                            format!("__out_{}_Success", node_id_str),
+                            VariableValue::Boolean(success),
+                        );
+                    }
+
+                    if let Some(next) = Self::follow_flow(&graph, current_node_id, "Next") {
+                        current_node_id = next;
+                    } else {
+                        break;
+                    }
+                }
+
                 // === Module D: Image Recognition ===
                 NodeType::GetPixelColor => {
                     let x = Self::evaluate_input(&graph, current_node_id, "X", &context)
@@ -1710,17 +1925,43 @@ impl Interpreter {
                         image_path, tolerance, region_x, region_y, region_w, region_h
                     ));
 
+                    // Check if file exists and show absolute path for debugging
+                    let abs_path = std::path::Path::new(&image_path)
+                        .canonicalize()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|_| format!("(not found: {})", image_path));
+                    logger(format!("FindImage: Resolved path: {}", abs_path));
+
                     let (found_x, found_y, found) = match image::open(&image_path) {
                         Ok(template) => {
-                            let template = template.to_rgba8();
+                            let mut template = template.to_rgba8();
+                            logger(format!(
+                                "FindImage: Template loaded {}x{} pixels",
+                                template.width(), template.height()
+                            ));
                             match xcap::Monitor::all() {
                                 Ok(monitors) => {
                                     if let Some(monitor) = monitors.first() {
                                         match monitor.capture_image() {
-                                            Ok(screen) => Self::find_template_in_image(
-                                                &screen, &template, tolerance, region_x, region_y,
-                                                region_w, region_h,
-                                            ),
+                                            Ok(screen) => {
+                                                logger(format!(
+                                                    "FindImage: Screen captured {}x{} pixels",
+                                                    screen.width(), screen.height()
+                                                ));
+                                                
+                                                logger(format!("FindImage: Starting template matching..."));
+                                                let start_time = std::time::Instant::now();
+                                                let result = Self::find_template_in_image(
+                                                    &screen, &template, tolerance, region_x, region_y,
+                                                    region_w, region_h,
+                                                );
+                                                logger(format!(
+                                                    "FindImage: Template matching took {:.2}s",
+                                                    start_time.elapsed().as_secs_f64()
+                                                ));
+                                                result
+                                            }
+
                                             Err(e) => {
                                                 logger(format!("FindImage: Capture error - {}", e));
                                                 (0, 0, false)
@@ -1737,7 +1978,7 @@ impl Interpreter {
                             }
                         }
                         Err(e) => {
-                            logger(format!("FindImage: Template load error - {}", e));
+                            logger(format!("FindImage: Template load error - {} ({})", e, image_path));
                             (0, 0, false)
                         }
                     };
@@ -1764,9 +2005,13 @@ impl Interpreter {
                         );
                     }
 
+                    logger(format!("FindImage: Execution complete, looking for Next connection..."));
+                    
                     if let Some(next) = Self::follow_flow(&graph, current_node_id, "Next") {
+                        logger(format!("FindImage: Following flow to next node"));
                         current_node_id = next;
                     } else {
+                        logger(format!("FindImage: No Next connection found, ending flow"));
                         break;
                     }
                 }
@@ -2581,7 +2826,10 @@ impl Interpreter {
             | NodeType::FindImage
             | NodeType::WaitForImage
             | NodeType::ScreenCapture
-            | NodeType::SaveScreenshot => {
+            | NodeType::SaveScreenshot
+            | NodeType::RegionCapture
+            | NodeType::HTTPRequest
+            | NodeType::ArrayPop => {
                 let ctx = context.lock().unwrap();
                 let key = format!("__out_{}_{}", node.id, _output_port);
                 Ok(ctx
@@ -2781,8 +3029,12 @@ impl Interpreter {
 
     // === Module D: Image Recognition Helper ===
 
-    /// Find a template image within a screen image using simple template matching.
-    /// Uses grid sampling for performance and tolerance for fuzzy matching.
+    /// Find a template image within a screen image using optimized multi-stage matching.
+    /// Find a template image within a screen image using robust matching.
+    /// Uses Rayon for parallel processing.
+    /// Implements Multi-Scale search:
+    /// 1. Searches at 1.0x scale (exact match)
+    /// 2. If screen is Retina (>2000px), also searches at 0.5x scale (downscaled screen)
     fn find_template_in_image(
         screen: &image::RgbaImage,
         template: &image::RgbaImage,
@@ -2799,47 +3051,101 @@ impl Interpreter {
             return (0, 0, false);
         }
 
-        let end_x = (region_x + region_w)
-            .min(screen.width())
-            .saturating_sub(tpl_w);
-        let end_y = (region_y + region_h)
-            .min(screen.height())
-            .saturating_sub(tpl_h);
+        // Helper function for parallel search on a specific screen buffer
+        let search_on_buffer = |search_screen: &image::RgbaImage, scale: u32| -> Option<(i64, i64)> {
+            let scr_w = search_screen.width();
+            let scr_h = search_screen.height();
 
-        // Grid sample step for performance (check every Nth pixel of template)
-        let sample_step = 4u32.max((tpl_w * tpl_h / 100).max(1));
+            // Adjust region for current scale
+            let r_x = region_x / scale;
+            let r_y = region_y / scale;
+            let r_w = region_w / scale;
+            let r_h = region_h / scale;
 
-        for sy in region_y..=end_y {
-            for sx in region_x..=end_x {
-                let mut matches = true;
-                let mut checked = 0u32;
+            let end_x = (r_x + r_w).min(scr_w).saturating_sub(tpl_w);
+            let end_y = (r_y + r_h).min(scr_h).saturating_sub(tpl_h);
 
-                // Sample points in template
-                'check: for ty in (0..tpl_h).step_by(sample_step as usize) {
-                    for tx in (0..tpl_w).step_by(sample_step as usize) {
-                        let tpl_pixel = template.get_pixel(tx, ty);
-                        // Skip transparent pixels in template
-                        if tpl_pixel[3] < 128 {
-                            continue;
+            if r_x > end_x || r_y > end_y {
+                return None;
+            }
+
+            let found = (r_y..=end_y).into_par_iter().find_map_first(|sy| {
+                for sx in r_x..=end_x {
+                    // Check if this position matches
+                    let mut matches = true;
+                    // Optimization: Check center pixel first
+                    let center_pixel = search_screen.get_pixel(sx + tpl_w/2, sy + tpl_h/2);
+                    let tpl_center = template.get_pixel(tpl_w/2, tpl_h/2);
+                    if tpl_center[3] >= 128 {
+                         let dr = (center_pixel[0] as i32 - tpl_center[0] as i32).abs();
+                         let dg = (center_pixel[1] as i32 - tpl_center[1] as i32).abs();
+                         let db = (center_pixel[2] as i32 - tpl_center[2] as i32).abs();
+                         if dr > tolerance || dg > tolerance || db > tolerance {
+                             continue;
+                         }
+                    }
+
+                    // Full check
+                    for ty in 0..tpl_h {
+                        for tx in 0..tpl_w {
+                            let tpl_pixel = template.get_pixel(tx, ty);
+                            if tpl_pixel[3] < 128 { continue; }
+
+                            let scr_pixel = search_screen.get_pixel(sx + tx, sy + ty);
+                            let dr = (scr_pixel[0] as i32 - tpl_pixel[0] as i32).abs();
+                            let dg = (scr_pixel[1] as i32 - tpl_pixel[1] as i32).abs();
+                            let db = (scr_pixel[2] as i32 - tpl_pixel[2] as i32).abs();
+
+                            if dr > tolerance || dg > tolerance || db > tolerance {
+                                matches = false;
+                                break;
+                            }
                         }
+                        if !matches { break; }
+                    }
 
-                        let scr_pixel = screen.get_pixel(sx + tx, sy + ty);
-                        let dr = (scr_pixel[0] as i32 - tpl_pixel[0] as i32).abs();
-                        let dg = (scr_pixel[1] as i32 - tpl_pixel[1] as i32).abs();
-                        let db = (scr_pixel[2] as i32 - tpl_pixel[2] as i32).abs();
-
-                        if dr > tolerance || dg > tolerance || db > tolerance {
-                            matches = false;
-                            break 'check;
-                        }
-                        checked += 1;
+                    if matches {
+                        return Some((sx, sy));
                     }
                 }
+                None
+            });
+            
+             found.map(|(x, y)| {
+                let final_x = (x * scale) as i64 + (tpl_w * scale / 2) as i64;
+                let final_y = (y * scale) as i64 + (tpl_h * scale / 2) as i64;
+                (final_x, final_y)
+            })
+        };
 
-                // Require at least some pixels checked
-                if matches && checked > 5 {
-                    return (sx as i64, sy as i64, true);
-                }
+        // Pass 1: Try exact match (Scale 1x)
+        if let Some((x, y)) = search_on_buffer(screen, 1) {
+            // If screen > 2000, we are in Physical pixels.
+            // But output should be Logical for UI/Enigo.
+            // If Pass 1 matched on Retina, it means Template was also Physical (xcap).
+            // So we must divide result by 2 to get Logical.
+            if screen.width() > 2000 {
+                return (x / 2, y / 2, true);
+            }
+             return (x, y, true);
+        }
+
+        // Pass 2: Try Downscaled match (Scale 2x)
+        // Cases handled:
+        // - Retina screen (@2x), Template @1x (e.g. from screencapture)
+        if screen.width() > 2000 {
+            // Downscale screen by 2x
+            let new_w = screen.width() / 2;
+            let new_h = screen.height() / 2;
+            let downscaled = image::imageops::resize(
+                screen, 
+                new_w, 
+                new_h, 
+                image::imageops::FilterType::Triangle
+            );
+            
+            if let Some((x, y)) = search_on_buffer(&downscaled, 2) {
+                return (x, y, true);
             }
         }
 
@@ -2887,3 +3193,7 @@ impl Interpreter {
         (matching_pixels as f64) / (sampled as f64)
     }
 }
+
+pub mod test_drag;
+pub mod test_drag_verification;
+pub mod test_find_image;

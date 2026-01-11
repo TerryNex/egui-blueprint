@@ -462,6 +462,67 @@ pub fn evaluate_node(
             }
         }
 
+        // === String Extraction Operations ===
+        NodeType::ExtractAfter => {
+            let source = evaluate_input(graph, node.id, "Source", context)?;
+            let keyword = evaluate_input(graph, node.id, "Keyword", context)?;
+            let length = evaluate_input(graph, node.id, "Length", context)?;
+
+            let source_s = to_string(&source);
+            let keyword_s = to_string(&keyword);
+            let len = match length {
+                VariableValue::Integer(i) => i as usize,
+                VariableValue::Float(f) => f as usize,
+                _ => 10,
+            };
+
+            let port = _output_port;
+            if let Some(idx) = source_s.find(&keyword_s) {
+                let start = idx + keyword_s.len();
+                let end = (start + len).min(source_s.len());
+                let result = source_s[start..end].to_string();
+                if port == "Result" {
+                    Ok(VariableValue::String(result))
+                } else {
+                    Ok(VariableValue::Boolean(true))
+                }
+            } else if port == "Result" {
+                Ok(VariableValue::String(String::new()))
+            } else {
+                Ok(VariableValue::Boolean(false))
+            }
+        }
+
+        NodeType::ExtractUntil => {
+            let source = evaluate_input(graph, node.id, "Source", context)?;
+            let keyword = evaluate_input(graph, node.id, "Keyword", context)?;
+            let delimiter = evaluate_input(graph, node.id, "Delimiter", context)?;
+
+            let source_s = to_string(&source);
+            let keyword_s = to_string(&keyword);
+            let delim_s = to_string(&delimiter);
+
+            let port = _output_port;
+            if let Some(idx) = source_s.find(&keyword_s) {
+                let start = idx + keyword_s.len();
+                let remaining = &source_s[start..];
+                let result = if let Some(end_idx) = remaining.find(&delim_s) {
+                    remaining[..end_idx].to_string()
+                } else {
+                    remaining.to_string()
+                };
+                if port == "Result" {
+                    Ok(VariableValue::String(result))
+                } else {
+                    Ok(VariableValue::Boolean(true))
+                }
+            } else if port == "Result" {
+                Ok(VariableValue::String(String::new()))
+            } else {
+                Ok(VariableValue::Boolean(false))
+            }
+        }
+
         // === Window Position (Pure data retrieval) ===
         NodeType::GetWindowPosition => {
             let output_port = _output_port;
@@ -538,7 +599,10 @@ pub fn evaluate_node(
         | NodeType::FindImage
         | NodeType::WaitForImage
         | NodeType::ScreenCapture
-        | NodeType::SaveScreenshot => {
+        | NodeType::SaveScreenshot
+        | NodeType::RegionCapture
+        | NodeType::HTTPRequest
+        | NodeType::ArrayPop => {
             let ctx = context.lock().unwrap();
             let key = format!("__out_{}_{}", node.id, _output_port);
             Ok(ctx

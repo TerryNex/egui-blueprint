@@ -87,6 +87,9 @@ pub const VALID_KEYS: &[&str] = &[
 /// Valid mouse button names.
 pub const VALID_BUTTONS: &[&str] = &["left", "right", "middle"];
 
+/// Valid HTTP methods for HTTPRequest nodes.
+pub const HTTP_METHODS: &[&str] = &["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"];
+
 /// Clipboard data for copy/paste operations.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ClipboardData {

@@ -3,21 +3,17 @@
 //! This module handles the main execution loop and control flow nodes
 //! like Branch, ForLoop, WhileLoop, Sequence, and Gate.
 
-use super::automation::string_to_key;
 use super::context::ExecutionContext;
-use super::image_recognition::{compare_images, find_template_in_image};
 use super::node_eval::evaluate_input;
-use super::type_conversions::{to_bool, to_float, to_string};
+use super::type_conversions::{to_bool, to_string};
 use crate::graph::{BlueprintGraph, VariableValue};
 use crate::node_types::NodeType;
 
-use enigo::{Button, Coordinate, Direction, Enigo, Key, Keyboard, Mouse, Settings};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use uuid::Uuid;
-use xcap::Monitor;
 
 /// Follow a flow connection from a node's output port.
 pub fn follow_flow(graph: &BlueprintGraph, node_id: Uuid, port_name: &str) -> Option<Uuid> {

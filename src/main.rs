@@ -18,15 +18,14 @@ use uuid::Uuid;
 
 fn main() -> eframe::Result<()> {
     env_logger::init();
-
-    let options = eframe::NativeOptions {
+    let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([1200.0, 800.0]),
         ..Default::default()
     };
 
     eframe::run_native(
-        "egui Blueprint Node Editor",
-        options,
+        "Automation Blueprint",
+        native_options,
         Box::new(|cc| {
             egui_extras::install_image_loaders(&cc.egui_ctx);
             // Default fonts look a bit small for blueprint, let's keep default for now.
@@ -55,9 +54,11 @@ struct MyApp {
     last_recorded_node_id: Option<Uuid>,
     // Mouse buffering for Click/Drag distinction
     pending_mouse_down: Option<(std::time::Instant, f64, f64, rdev::Button)>, // time, x, y, button
+    is_dragging: bool, // True when mouse button is held down (for drag recording)
     // Nodes window state
     nodes_search_filter: String,
     nodes_sort_mode: u8, // 0 = default, 1 = alphabetical, 2 = by type
+    last_event_time: Option<std::time::Instant>,
 }
 
 impl Default for MyApp {
@@ -79,8 +80,10 @@ impl Default for MyApp {
             use_relative_coords: false,
             last_recorded_node_id: None,
             pending_mouse_down: None,
+            is_dragging: false,
             nodes_search_filter: String::new(),
             nodes_sort_mode: 0,
+            last_event_time: None,
         };
         let _ = std::fs::create_dir_all("scripts");
         // Load settings first (may auto-load last script)
@@ -193,10 +196,106 @@ impl MyApp {
             },
         );
     }
+
+    /// Quick capture: Use macOS screencapture to interactively select a region,
+    /// save it as a template, and create a FindImage node with the path pre-filled.
+    fn perform_quick_capture(&mut self, _ctx: &egui::Context) {
+        // Generate unique filename
+        let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S_%3f");
+        let filename = format!("scripts/templates/capture_{}.png", timestamp);
+        
+        // Ensure templates directory exists
+        let _ = std::fs::create_dir_all("scripts/templates");
+        
+        self.logs.push("[Capture] Starting interactive capture...".into());
+        
+        // Use macOS screencapture with interactive selection
+        // -i = interactive mode (user selects region)
+        // -x = no sound
+        // -r = don't add shadow to window captures
+        #[cfg(target_os = "macos")]
+        let result = std::process::Command::new("screencapture")
+            .args(["-i", "-x", "-r", &filename])
+            .output();
+        
+        #[cfg(not(target_os = "macos"))]
+        let result: Result<std::process::Output, std::io::Error> = Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "Quick capture only supported on macOS"
+        ));
+        
+        match result {
+            Ok(output) => {
+                if output.status.success() {
+                    // Check if file was actually created (user might have cancelled with Escape)
+                    if std::path::Path::new(&filename).exists() {
+                        self.logs.push(format!("[Capture] Saved to {}", filename));
+                        
+                        // Create FindImage node with the captured image
+                        self.create_find_image_node(&filename);
+                    } else {
+                        self.logs.push("[Capture] Cancelled by user".into());
+                    }
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    self.logs.push(format!("[Capture] Failed: {}", stderr));
+                }
+            }
+            Err(e) => {
+                self.logs.push(format!("[Capture] Error: {}", e));
+            }
+        }
+    }
+    
+    /// Create a FindImage node pre-filled with the given image path
+    fn create_find_image_node(&mut self, image_path: &str) {
+        use crate::graph::VariableValue;
+        
+        // Get ports for FindImage node
+        let (mut inputs, outputs) = GraphEditor::get_ports_for_type(&NodeType::FindImage);
+        
+        // Pre-fill the ImagePath input
+        for port in &mut inputs {
+            if port.name == "ImagePath" {
+                port.default_value = VariableValue::String(image_path.to_string());
+            }
+        }
+        
+        // Calculate position: place to the right of rightmost node
+        let max_x = self.graph.nodes.values()
+            .map(|n| n.position.0)
+            .fold(100.0f32, f32::max);
+        
+        let node_id = Uuid::new_v4();
+        let z_order = self.editor.next_z_order;
+        self.editor.next_z_order += 1;
+        
+        let node = Node {
+            id: node_id,
+            node_type: NodeType::FindImage,
+            position: (max_x + 250.0, 100.0),
+            inputs,
+            outputs,
+            z_order,
+            display_name: Some("Quick Capture".into()),
+        };
+        
+        self.graph.nodes.insert(node_id, node);
+        
+        // Select the new node
+        self.editor.selected_nodes.clear();
+        self.editor.selected_nodes.insert(node_id);
+        
+        self.logs.push(format!("[Capture] Created FindImage node with {}", image_path));
+    }
 }
 
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Verification Test Trigger (Added for Drag Debugging)
+        if ctx.input(|i| i.key_pressed(egui::Key::F6)) {
+             crate::executor::test_drag_verification::run_drag_verification();
+        }
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label("Blueprint Editor (Custom)");
@@ -329,7 +428,13 @@ impl eframe::App for MyApp {
                         self.editor.recorder.start();
                         self.logs.push("[System] Recording Started...".into());
                         self.last_recorded_node_id = None;
+                        self.last_event_time = None;
                     }
+                }
+
+                // Quick Capture Button - captures region and creates FindImage node
+                if ui.button("📸 Capture").on_hover_text("Capture screen region and create FindImage node").clicked() {
+                    self.perform_quick_capture(ctx);
                 }
 
                 ui.checkbox(&mut self.use_relative_coords, "Relative Coords");
@@ -377,21 +482,24 @@ impl eframe::App for MyApp {
 
             match final_action.event.event_type {
                 rdev::EventType::ButtonPress(button) => {
-                    // Start pending
-                    // If one already exists (timeout not hit but new press?), force emit old one?
-                    // Currently single pending support.
-                    if let Some((_, sx, sy, sb)) = self.pending_mouse_down.take() {
-                        // Emit implicit MouseDown for previous
-                        let node = recorder::mapper::create_mouse_btn_node(
-                            NodeType::MouseDown,
-                            (0.0, 0.0),
-                            btn_to_str(sb),
-                            sx as i64,
-                            sy as i64,
-                        );
-                        nodes_to_add.push(node);
-                    }
-
+                    // Emit MouseDown immediately and start dragging
+                    let (x, y) = (
+                        final_action.cursor_position.0 as i64,
+                        final_action.cursor_position.1 as i64,
+                    );
+                    let btn_str = btn_to_str(button);
+                    
+                    let node = recorder::mapper::create_mouse_btn_node(
+                        NodeType::MouseDown,
+                        (0.0, 0.0),
+                        btn_str,
+                        x,
+                        y,
+                    );
+                    nodes_to_add.push(node);
+                    
+                    // Set drag state
+                    self.is_dragging = true;
                     self.pending_mouse_down = Some((
                         std::time::Instant::now(),
                         final_action.cursor_position.0,
@@ -406,75 +514,33 @@ impl eframe::App for MyApp {
                     );
                     let btn_str = btn_to_str(button);
 
-                    if let Some((time, start_x, start_y, start_btn)) =
-                        self.pending_mouse_down.take()
-                    {
-                        // Check distance & button match
+                    // Check if this was a quick click (same position, <200ms)
+                    if let Some((time, start_x, start_y, start_btn)) = self.pending_mouse_down.take() {
                         let dist = ((final_action.cursor_position.0 - start_x).powi(2)
                             + (final_action.cursor_position.1 - start_y).powi(2))
                         .sqrt();
-
                         let same_btn = btn_str == btn_to_str(start_btn);
+                        let elapsed_ms = time.elapsed().as_millis();
 
-                        if dist < 5.0 && same_btn {
-                            // Click!
-                            // Use RightClick for Right button
-                            let node_type = if matches!(button, rdev::Button::Right) {
-                                NodeType::RightClick // Assuming RightClick node exists and behaves like Click
-                            } else {
-                                NodeType::Click
-                            };
-
-                            // RightClick node might not have "Button" input, but standard X/Y.
-                            // Click node has X/Y.
-                            // Let's use create_click_node for both as they share structure (Inputs: Exec, X, Y)
-
-                            let node =
-                                recorder::mapper::create_click_node(node_type, (0.0, 0.0), x, y);
-                            nodes_to_add.push(node);
+                        // WORKAROUND: rdev on macOS fires ButtonRelease almost immediately after ButtonPress.
+                        if elapsed_ms < 100 && dist < 5.0 && same_btn {
+                            // Likely rdev artifact, put pending back and ignore this release
+                            self.pending_mouse_down = Some((time, start_x, start_y, start_btn));
+                            // Also keep is_dragging true since we're still waiting for real release
                         } else {
-                            // Drag -> Full sequence: MouseDown -> Delay -> MouseMove -> Delay -> MouseUp
-
-                            // 1. MouseDown at start position
-                            let node_down = recorder::mapper::create_mouse_btn_node(
-                                NodeType::MouseDown,
-                                (0.0, 0.0),
-                                btn_to_str(start_btn),
-                                start_x as i64,
-                                start_y as i64,
-                            );
-                            nodes_to_add.push(node_down);
-
-                            // 2. First Delay (10ms default or actual elapsed / 2)
-                            let elapsed = time.elapsed().as_secs_f32();
-                            let delay_amount = if elapsed > 0.02 { elapsed / 2.0 } else { 0.01 };
-                            let node_delay1 =
-                                recorder::mapper::create_delay_node((0.0, 0.0), delay_amount);
-                            nodes_to_add.push(node_delay1);
-
-                            // 3. MouseMove to end position
-                            let node_move =
-                                recorder::mapper::create_mouse_move_node((0.0, 0.0), x, y);
-                            nodes_to_add.push(node_move);
-
-                            // 4. Second Delay (10ms default or actual elapsed / 2)
-                            let node_delay2 =
-                                recorder::mapper::create_delay_node((0.0, 0.0), delay_amount);
-                            nodes_to_add.push(node_delay2);
-
-                            // 5. MouseUp at end position
-                            let node_up = recorder::mapper::create_mouse_btn_node(
+                            // Real release - emit MouseUp
+                            let node = recorder::mapper::create_mouse_btn_node(
                                 NodeType::MouseUp,
                                 (0.0, 0.0),
                                 btn_str,
                                 x,
                                 y,
                             );
-                            nodes_to_add.push(node_up);
+                            nodes_to_add.push(node);
+                            self.is_dragging = false;
                         }
                     } else {
-                        // Release without pending (e.g. timeout fired already, or held from before)
-                        // Just MouseUp
+                        // Release without pending (started before recording)
                         let node = recorder::mapper::create_mouse_btn_node(
                             NodeType::MouseUp,
                             (0.0, 0.0),
@@ -483,11 +549,21 @@ impl eframe::App for MyApp {
                             y,
                         );
                         nodes_to_add.push(node);
+                        self.is_dragging = false;
                     }
                 }
                 _ => {
-                    // KeyPress etc.
-                    // Mapper handles KeyPress.
+                    // KeyPress or MouseMove (if streamed)
+                    // Auto-insert Delay if needed
+                    if let Some(last_time) = self.last_event_time {
+                         let elapsed = last_time.elapsed().as_secs_f32();
+                         if elapsed > 0.05 { // Lowered to 50ms to catch faster sequences
+                             let delay_node = recorder::mapper::create_delay_node((0.0, 0.0), elapsed);
+                             nodes_to_add.push(delay_node);
+                         }
+                    }
+                    self.last_event_time = Some(std::time::Instant::now());
+
                     let pos = (0.0, 0.0);
                     if let Some(node) = recorder::mapper::map_action_to_node(final_action, pos) {
                         nodes_to_add.push(node);
@@ -846,6 +922,7 @@ impl eframe::App for MyApp {
                                 NodeType::SetWindowPosition => "Set Window Pos".into(),
                                 NodeType::ScreenCapture => "Screen Capture".into(),
                                 NodeType::SaveScreenshot => "Save Screenshot".into(),
+                                NodeType::RegionCapture => "Region Capture".into(),
                                 _ => format!("{:?}", node.node_type),
                             };
 

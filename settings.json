@@ -1,10 +1,10 @@
 {
   "style": {
     "header_colors": {
-      "Function": [
+      "Math": [
         50,
+        150,
         100,
-        200,
         255
       ],
       "Default": [
@@ -13,21 +13,21 @@
         122,
         255
       ],
-      "Variable": [
-        150,
-        100,
+      "Function": [
         50,
-        255
-      ],
-      "Math": [
-        50,
-        150,
         100,
+        200,
         255
       ],
       "Event": [
         180,
         50,
+        50,
+        255
+      ],
+      "Variable": [
+        150,
+        100,
         50,
         255
       ]
@@ -36,5 +36,5 @@
     "font_size": 14.0
   },
   "history_max_records": 1000,
-  "last_script_name": "blueprint"
+  "last_script_name": "http_test"
 }

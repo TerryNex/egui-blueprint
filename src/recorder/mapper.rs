@@ -43,16 +43,20 @@ pub fn map_action_to_node(action: RecordedAction, position: (f32, f32)) -> Optio
         }
         EventType::KeyPress(key) => {
             // Map key to string.
-            // event.name is Option<String>, key is valid enum.
-            // We prefer event.name for readable chars, or key enum debug for others.
+            // rustdesk-org/rdev uses `unicode: Option<UnicodeInfo>` where UnicodeInfo has `name: Option<String>`
+            // We prefer the unicode name for readable chars, or key enum debug for others.
             let key_name = action
                 .event
-                .name
-                .or_else(|| Some(format!("{:?}", key)))
-                .unwrap();
+                .unicode
+                .as_ref()
+                .and_then(|u| u.name.clone())
+                .unwrap_or_else(|| format!("{:?}", key));
             Some(create_key_node(NodeType::KeyPress, position, key_name))
         }
-        // We explicitly ignore Scroll and MouseMove here as they are filtered in mod.rs or handled elsewhere
+        EventType::MouseMove { x, y } => {
+            Some(create_mouse_move_node(position, x as i64, y as i64))
+        }
+        // We explicitly ignore Scroll here
         _ => None,
     }
 }

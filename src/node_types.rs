@@ -131,6 +131,8 @@ pub enum NodeType {
     KeyUp,
     /// Type a string of text
     TypeText,
+    /// Type a string by simulating individual key presses with configurable delay
+    TypeString,
     /// Key combinations (Ctrl+C, Cmd+V, etc.)
     HotKey,
     // Screenshot & Image Tools (Module C)
@@ -138,6 +140,8 @@ pub enum NodeType {
     ScreenCapture,
     /// Save screenshot to file
     SaveScreenshot,
+    /// Capture a specific screen region to image file
+    RegionCapture,
     // Image Recognition (Module D)
     /// Get RGB color at screen coordinates
     GetPixelColor,
@@ -151,6 +155,10 @@ pub enum NodeType {
     WaitForImage,
     /// Compare two images with tolerance
     ImageSimilarity,
+    /// Extract N characters after a keyword
+    ExtractAfter,
+    /// Extract content from keyword until delimiter
+    ExtractUntil,
 }
 
 impl Default for NodeType {

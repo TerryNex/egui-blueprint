@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased] - 2026-01-11
+
+### Added
+
+- **String Extraction Nodes** (Agent: Antigravity):
+  - `ExtractAfter` - Extract N characters after a keyword (Source, Keyword, Length → Result, Found)
+  - `ExtractUntil` - Extract content from keyword until delimiter (Source, Keyword, Delimiter → Result, Found)
+- **TypeString Node** (Agent: Antigravity):
+  - Simulates individual key presses for each character in a string
+  - Example: "012 012" → presses 0, 1, 2, Space, 0, 1, 2 sequentially
+  - Configurable delay between keypresses (default: 50ms)
+- **HTTP Method Dropdown**: Added filterable dropdown for HTTPRequest Method input (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS)
+- **HTTP Test Template**: Added `scripts/templates/http_test_template.json` demonstrating HTTPRequest + ExtractUntil
+
+### Fixed
+
+- **HTTPRequest Response Output** (Bug): Fixed issue where HTTPRequest node's Response and Success outputs returned `None`. Changed storage pattern from global `__http_response` variable to per-node `__out_{id}_{port}` pattern matching other flow nodes.
+- **ArrayPop Output**: Added ArrayPop to stored outputs handler so its Result output port works correctly.
+
 ## [Unreleased] - 2026-01-07
 
 ### Added
@@ -39,9 +58,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - Cross-platform support for App Launch/Close (macOS/Windows/Linux)
 - **Module C: Screenshot & Image Tools** (Agent: Antigravity-C):
   - **Screen Capture**: `ScreenCapture` node - Capture full screen or specific display
+  - **Region Capture**: `RegionCapture` node - Capture specific screen region with X, Y, Width, Height inputs
+  - **Quick Capture Button**: 📸 Capture button in toolbar - Interactive region selection that auto-creates FindImage node
   - **File Save**: `SaveScreenshot` node - Copy captured image to specified path
   - Uses `xcap` crate (v0.8) for cross-platform screen capture
-  - Screenshots saved to `scripts/screenshots/` with timestamps
+  - Screenshots saved to `scripts/screenshots/`, templates to `scripts/templates/`
 - **Module G: Window APIs Implemented** (Agent: Antigravity):
   - `FocusWindow` - Real implementation using AppleScript on macOS, wmctrl on Linux
   - `GetWindowPosition` - Real implementation using AppleScript on macOS, xdotool on Linux  
@@ -51,6 +72,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - **Connection UX**: Improved port interaction with larger hitboxes (16px → 24px), larger visuals (5px → 7px), and hover glow effects
   - **StringJoin**: Dynamic concatenation node that auto-expands inputs as you connect them
   - **StringBetween**: Extract text between two delimiter strings (Source, Before, After)
+
+### Fixed
+
+- **FindImage Retina Scaling** (Bug #UserReported): Fixed issue where `FindImage` failed on Retina screens due to logical/physical pixel mismatch. Implemented robust Multi-Scale Pyramid matching (1x and 0.5x search) and auto-coordinate normalization.
+- **Mouse Action Defaults** (Bug #Fix): `MouseDown` and `MouseUp` now check for inputs; if X/Y inputs are missing/disconnected, they perform the action at the current cursor position instead of forcing a move to (0,0).
+- **Recorder Drag Support** (Bug #Fix): Recorder now captures `MouseMove` events while a mouse button is held down (dragging), allowing drag-and-drop operations to be recorded. Added 5px threshold to reduce noise.
 
 ### Changed
 

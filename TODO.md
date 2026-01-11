@@ -71,7 +71,8 @@
 ### Tasks
 
 - [x] `ScreenCapture` node - Capture full screen
-- [ ] `RegionSelect` UI - Visual box selection overlay
+- [x] `RegionCapture` node - Capture specific screen region (X, Y, Width, Height)
+- [ ] `RegionSelect` UI - Visual box selection overlay (optional enhancement)
 - [x] `SaveScreenshot` - Auto-save to project folder
 - [ ] `ImageLibrary` UI - Browse saved images
 
@@ -218,10 +219,10 @@ See individual entries in CHANGELOG.md for details.
 **Root Cause:** The background context menu uses `ui.interact(clip_rect, ...)` which covers the entire canvas, including nodes. Even with `interaction_consumed` check, the context menus conflict.
 
 **Potential Solutions:**
+
 1. Check if pointer is over any node before showing background context menu
 2. Use a different mechanism for the background context menu (e.g., only trigger on truly empty areas)
 3. Add a small delay or priority system for context menus
-
 
 ---
 

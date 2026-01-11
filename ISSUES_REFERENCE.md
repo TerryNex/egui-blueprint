@@ -76,3 +76,53 @@ if input_space && self.node_finder.is_none() && self.editing_node_name.is_none()
 3. **Interaction:** Wrap each interactive element in `ui.new_child()` to isolate layout
 4. **Hit Testing:** For complex cases, use manual `rect.contains(pointer_pos)` checks
 5. **Context Menus:** Keep `ui.interact()` for `response.context_menu()` support
+
+---
+
+### Issue: FindImage Retina Scaling & Mismatch
+
+**Symptom:**
+
+- `FindImage` fails to find template on Retina screens even when cropped from current screen (Case B)
+- Or fails to find template when perfectly matched in `Quick Capture` (Case A) depending on scaling logic
+- Mismatch between `screencapture` CLI (Logical pixels @1x) and `xcap` crate (Physical pixels @2x)
+
+**Root Cause:**
+
+1. **Resolution Mismatch:** `screencapture` saves logical pixels (e.g. 100x100), while `xcap` captures physical screen buffer (200x200). A direct pixel match fails.
+2. **Coordinate Space:** `Enigo` (mouse control) expects Logical coordinates, but `xcap` image search returns Physical coordinates.
+3. **Phase Mismatch:** Naive downscaling of `xcap` image (2x -> 1x) can introduce aliasing or phase shift if crop coordinates are odd numbers.
+
+**Solution:**
+
+**1. Multi-Scale Pyramid Search:**
+
+```rust
+// Pass 1: Try exact match (Scale 1x) - Handles Physical Template (Case A)
+if let Some((x, y)) = search_on_buffer(screen, 1) {
+    if screen.width() > 2000 {
+        return (x / 2, y / 2, true); // Convert Physical -> Logical
+    }
+    return (x, y, true);
+}
+
+// Pass 2: Try Downscaled match (Scale 2x) - Handles Logical Template (Case B)
+if screen.width() > 2000 {
+    let downscaled = image::imageops::resize(screen, ...);
+    if let Some((x, y)) = search_on_buffer(&downscaled, 2) {
+         // downscaled is already logical size
+        return (x, y, true);
+    }
+}
+```
+
+**2. Coordinate Normalization:**
+
+- Always return **Logical Coordinates** from the executor.
+- If match found in Physical pass on Retina, divide x,y by 2.
+
+**Key Insight:**
+
+- Never assume screen capture and template have same density.
+- Always try original scale first (preserves data), then gracefully degrade to downscaled search.
+- UI Automation/Mouse control always operates in Logical space (Points), while Image Processing usually operates in Physical space (Pixels).
