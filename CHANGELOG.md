@@ -18,6 +18,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **HTTP Method Dropdown**: Added filterable dropdown for HTTPRequest Method input (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS)
 - **HTTP Test Template**: Added `scripts/templates/http_test_template.json` demonstrating HTTPRequest + ExtractUntil
 
+### Improved
+
+- **Complete Node Category Colors**: Expanded settings.json with 18 color categories:
+  - Added: Logic, Comparison, ControlFlow, IO, Conversion, Screenshot, Recognition
+  - Both canvas nodes and Nodes List window now use consistent category colors
+  - All node types now have explicit color mappings (no fallback to Default)
+- **TODO Organization**:
+  - Moved completed tasks to new `COMPLETED.md` archive file
+  - Simplified `TODO.md` to focus on pending and in-progress tasks
+  - Added new feature requests: memory optimization, force stop loops, log export, style reset
+
 ### Fixed
 
 - **HTTPRequest Response Output** (Bug): Fixed issue where HTTPRequest node's Response and Success outputs returned `None`. Changed storage pattern from global `__http_response` variable to per-node `__out_{id}_{port}` pattern matching other flow nodes.

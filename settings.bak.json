@@ -1,0 +1,40 @@
+{
+  "style": {
+    "header_colors": {
+      "Math": [
+        50,
+        150,
+        100,
+        255
+      ],
+      "Default": [
+        122,
+        122,
+        122,
+        255
+      ],
+      "Function": [
+        50,
+        100,
+        200,
+        255
+      ],
+      "Event": [
+        180,
+        50,
+        50,
+        255
+      ],
+      "Variable": [
+        150,
+        100,
+        50,
+        255
+      ]
+    },
+    "use_gradient_connections": true,
+    "font_size": 14.0
+  },
+  "history_max_records": 1000,
+  "last_script_name": "blueprint_test"
+}

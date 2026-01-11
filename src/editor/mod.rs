@@ -92,7 +92,7 @@ impl GraphEditor {
                     let zoom_delta = i.zoom_delta();
                     if zoom_delta != 1.0 {
                         let old_zoom = self.zoom;
-                        let new_zoom = (old_zoom * zoom_delta).clamp(0.1, 10.0);
+                        let new_zoom = (old_zoom * zoom_delta).clamp(0.1, 1.0);
                         let actual_zoom_ratio = new_zoom / old_zoom;
                         
                         let pointer = i.pointer.hover_pos().unwrap() - ui.max_rect().min.to_vec2();
@@ -105,7 +105,7 @@ impl GraphEditor {
                     if scroll.y != 0.0 && !i.modifiers.shift {
                         let old_zoom = self.zoom;
                         let zoom_factor = 1.0 + scroll.y * 0.001;
-                        let new_zoom = (old_zoom * zoom_factor).clamp(0.1, 10.0);
+                        let new_zoom = (old_zoom * zoom_factor).clamp(0.1, 1.0);
                         
                         // Calculate the actual zoom change ratio
                         let actual_zoom_ratio = new_zoom / old_zoom;
@@ -140,7 +140,7 @@ impl GraphEditor {
                         ui.max_rect().size() / 2.0
                     };
                     let old_zoom = self.zoom;
-                    let new_zoom = (old_zoom * 1.1).clamp(0.1, 10.0);
+                    let new_zoom = (old_zoom * 1.1).clamp(0.1, 1.0);
                     let actual_ratio = new_zoom / old_zoom;
                     self.pan = center - (center - self.pan) * actual_ratio;
                     self.zoom = new_zoom;
@@ -152,7 +152,7 @@ impl GraphEditor {
                         ui.max_rect().size() / 2.0
                     };
                     let old_zoom = self.zoom;
-                    let new_zoom = (old_zoom * 0.9).clamp(0.1, 10.0);
+                    let new_zoom = (old_zoom * 0.9).clamp(0.1, 1.0);
                     let actual_ratio = new_zoom / old_zoom;
                     self.pan = center - (center - self.pan) * actual_ratio;
                     self.zoom = new_zoom;
@@ -1520,6 +1520,7 @@ impl GraphEditor {
                     "Function"
                 }
             }
+            // Math Operations
             crate::node_types::NodeType::Add
             | crate::node_types::NodeType::Subtract
             | crate::node_types::NodeType::Multiply
@@ -1530,11 +1531,14 @@ impl GraphEditor {
             | crate::node_types::NodeType::Min
             | crate::node_types::NodeType::Max
             | crate::node_types::NodeType::Clamp
-            | crate::node_types::NodeType::Random => "Math",
+            | crate::node_types::NodeType::Random
+            | crate::node_types::NodeType::Constant => "Math",
 
+            // Variables
             crate::node_types::NodeType::GetVariable { .. }
             | crate::node_types::NodeType::SetVariable { .. } => "Variable",
 
+            // String Operations
             crate::node_types::NodeType::StringJoin
             | crate::node_types::NodeType::StringBetween
             | crate::node_types::NodeType::Concat
@@ -1543,12 +1547,40 @@ impl GraphEditor {
             | crate::node_types::NodeType::Contains
             | crate::node_types::NodeType::Replace
             | crate::node_types::NodeType::Format
-            | crate::node_types::NodeType::ToString
-            | crate::node_types::NodeType::ToInteger
-            | crate::node_types::NodeType::ToFloat => "String",
+            | crate::node_types::NodeType::ExtractAfter
+            | crate::node_types::NodeType::ExtractUntil => "String",
 
+            // Type Conversions
+            crate::node_types::NodeType::ToString
+            | crate::node_types::NodeType::ToInteger
+            | crate::node_types::NodeType::ToFloat => "Conversion",
+
+            // Comparison Operators
+            crate::node_types::NodeType::Equals
+            | crate::node_types::NodeType::NotEquals
+            | crate::node_types::NodeType::GreaterThan
+            | crate::node_types::NodeType::GreaterThanOrEqual
+            | crate::node_types::NodeType::LessThan
+            | crate::node_types::NodeType::LessThanOrEqual => "Comparison",
+
+            // Logic Operators
+            crate::node_types::NodeType::And
+            | crate::node_types::NodeType::Or
+            | crate::node_types::NodeType::Not
+            | crate::node_types::NodeType::Xor => "Logic",
+
+            // Control Flow
+            crate::node_types::NodeType::Branch
+            | crate::node_types::NodeType::ForLoop
+            | crate::node_types::NodeType::WhileLoop
+            | crate::node_types::NodeType::Sequence
+            | crate::node_types::NodeType::Gate
+            | crate::node_types::NodeType::Entry => "ControlFlow",
+
+            // Timing
             crate::node_types::NodeType::Delay => "Time",
 
+            // Desktop Input Automation
             crate::node_types::NodeType::Click
             | crate::node_types::NodeType::DoubleClick
             | crate::node_types::NodeType::RightClick
@@ -1560,18 +1592,23 @@ impl GraphEditor {
             | crate::node_types::NodeType::KeyDown
             | crate::node_types::NodeType::KeyUp
             | crate::node_types::NodeType::TypeText
-            | crate::node_types::NodeType::HotKey
-            | crate::node_types::NodeType::ReadInput => "Input",
+            | crate::node_types::NodeType::TypeString
+            | crate::node_types::NodeType::HotKey => "Input",
 
+            // I/O Operations
+            crate::node_types::NodeType::ReadInput
+            | crate::node_types::NodeType::FileRead
+            | crate::node_types::NodeType::FileWrite => "IO",
+
+            // System Control
             crate::node_types::NodeType::RunCommand
             | crate::node_types::NodeType::LaunchApp
             | crate::node_types::NodeType::CloseApp
             | crate::node_types::NodeType::FocusWindow
             | crate::node_types::NodeType::GetWindowPosition
-            | crate::node_types::NodeType::SetWindowPosition
-            | crate::node_types::NodeType::FileRead
-            | crate::node_types::NodeType::FileWrite => "System",
+            | crate::node_types::NodeType::SetWindowPosition => "System",
 
+            // Data Operations
             crate::node_types::NodeType::ArrayCreate
             | crate::node_types::NodeType::ArrayPush
             | crate::node_types::NodeType::ArrayPop
@@ -1582,14 +1619,22 @@ impl GraphEditor {
             | crate::node_types::NodeType::JSONStringify
             | crate::node_types::NodeType::HTTPRequest => "Data",
 
+            // Screenshot & Image Tools
             crate::node_types::NodeType::ScreenCapture
             | crate::node_types::NodeType::SaveScreenshot
-            | crate::node_types::NodeType::GetPixelColor
+            | crate::node_types::NodeType::RegionCapture => "Screenshot",
+
+            // Image Recognition
+            crate::node_types::NodeType::GetPixelColor
             | crate::node_types::NodeType::FindColor
             | crate::node_types::NodeType::WaitForColor
             | crate::node_types::NodeType::FindImage
             | crate::node_types::NodeType::WaitForImage
-            | crate::node_types::NodeType::ImageSimilarity => "Image",
+            | crate::node_types::NodeType::ImageSimilarity => "Recognition",
+
+            // Input/Output Parameters
+            crate::node_types::NodeType::InputParam
+            | crate::node_types::NodeType::OutputParam => "Function",
 
             _ => "Default",
         };

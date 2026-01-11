@@ -949,13 +949,16 @@ impl eframe::App for MyApp {
                                         .copied()
                                         .unwrap_or(egui::Color32::from_rgb(180, 50, 50))
                                 }
-                                NodeType::BlueprintFunction { .. } => self
+                                NodeType::BlueprintFunction { .. }
+                                | NodeType::InputParam
+                                | NodeType::OutputParam => self
                                     .editor
                                     .style
                                     .header_colors
                                     .get("Function")
                                     .copied()
                                     .unwrap_or(egui::Color32::from_rgb(50, 100, 180)),
+                                // Math Operations
                                 NodeType::Add
                                 | NodeType::Subtract
                                 | NodeType::Multiply
@@ -974,6 +977,7 @@ impl eframe::App for MyApp {
                                     .get("Math")
                                     .copied()
                                     .unwrap_or(egui::Color32::from_rgb(50, 150, 50)),
+                                // Variables
                                 NodeType::GetVariable { .. } | NodeType::SetVariable { .. } => self
                                     .editor
                                     .style
@@ -981,6 +985,154 @@ impl eframe::App for MyApp {
                                     .get("Variable")
                                     .copied()
                                     .unwrap_or(egui::Color32::from_rgb(150, 100, 50)),
+                                // String Operations
+                                NodeType::Concat
+                                | NodeType::Split
+                                | NodeType::Length
+                                | NodeType::Contains
+                                | NodeType::Replace
+                                | NodeType::Format
+                                | NodeType::StringJoin
+                                | NodeType::StringBetween
+                                | NodeType::ExtractAfter
+                                | NodeType::ExtractUntil => self
+                                    .editor
+                                    .style
+                                    .header_colors
+                                    .get("String")
+                                    .copied()
+                                    .unwrap_or(egui::Color32::from_rgb(200, 100, 100)),
+                                // Type Conversions
+                                NodeType::ToInteger | NodeType::ToFloat | NodeType::ToString => self
+                                    .editor
+                                    .style
+                                    .header_colors
+                                    .get("Conversion")
+                                    .copied()
+                                    .unwrap_or(egui::Color32::from_rgb(150, 200, 100)),
+                                // Comparison Operators
+                                NodeType::Equals
+                                | NodeType::NotEquals
+                                | NodeType::GreaterThan
+                                | NodeType::GreaterThanOrEqual
+                                | NodeType::LessThan
+                                | NodeType::LessThanOrEqual => self
+                                    .editor
+                                    .style
+                                    .header_colors
+                                    .get("Comparison")
+                                    .copied()
+                                    .unwrap_or(egui::Color32::from_rgb(150, 100, 200)),
+                                // Logic Operators
+                                NodeType::And | NodeType::Or | NodeType::Not | NodeType::Xor => self
+                                    .editor
+                                    .style
+                                    .header_colors
+                                    .get("Logic")
+                                    .copied()
+                                    .unwrap_or(egui::Color32::from_rgb(100, 50, 200)),
+                                // Control Flow
+                                NodeType::Branch
+                                | NodeType::ForLoop
+                                | NodeType::WhileLoop
+                                | NodeType::Sequence
+                                | NodeType::Gate
+                                | NodeType::Entry => self
+                                    .editor
+                                    .style
+                                    .header_colors
+                                    .get("ControlFlow")
+                                    .copied()
+                                    .unwrap_or(egui::Color32::from_rgb(200, 150, 50)),
+                                // Timing
+                                NodeType::Delay => self
+                                    .editor
+                                    .style
+                                    .header_colors
+                                    .get("Time")
+                                    .copied()
+                                    .unwrap_or(egui::Color32::from_rgb(100, 200, 100)),
+                                // Desktop Input Automation
+                                NodeType::Click
+                                | NodeType::DoubleClick
+                                | NodeType::RightClick
+                                | NodeType::MouseMove
+                                | NodeType::MouseDown
+                                | NodeType::MouseUp
+                                | NodeType::Scroll
+                                | NodeType::KeyPress
+                                | NodeType::KeyDown
+                                | NodeType::KeyUp
+                                | NodeType::TypeText
+                                | NodeType::TypeString
+                                | NodeType::HotKey => self
+                                    .editor
+                                    .style
+                                    .header_colors
+                                    .get("Input")
+                                    .copied()
+                                    .unwrap_or(egui::Color32::from_rgb(200, 150, 50)),
+                                // I/O Operations
+                                NodeType::ReadInput | NodeType::FileRead | NodeType::FileWrite => {
+                                    self.editor
+                                        .style
+                                        .header_colors
+                                        .get("IO")
+                                        .copied()
+                                        .unwrap_or(egui::Color32::from_rgb(100, 150, 200))
+                                }
+                                // System Control
+                                NodeType::RunCommand
+                                | NodeType::LaunchApp
+                                | NodeType::CloseApp
+                                | NodeType::FocusWindow
+                                | NodeType::GetWindowPosition
+                                | NodeType::SetWindowPosition => self
+                                    .editor
+                                    .style
+                                    .header_colors
+                                    .get("System")
+                                    .copied()
+                                    .unwrap_or(egui::Color32::from_rgb(100, 50, 200)),
+                                // Data Operations
+                                NodeType::ArrayCreate
+                                | NodeType::ArrayPush
+                                | NodeType::ArrayPop
+                                | NodeType::ArrayGet
+                                | NodeType::ArraySet
+                                | NodeType::ArrayLength
+                                | NodeType::JSONParse
+                                | NodeType::JSONStringify
+                                | NodeType::HTTPRequest => self
+                                    .editor
+                                    .style
+                                    .header_colors
+                                    .get("Data")
+                                    .copied()
+                                    .unwrap_or(egui::Color32::from_rgb(50, 150, 150)),
+                                // Screenshot & Image Tools
+                                NodeType::ScreenCapture
+                                | NodeType::SaveScreenshot
+                                | NodeType::RegionCapture => self
+                                    .editor
+                                    .style
+                                    .header_colors
+                                    .get("Screenshot")
+                                    .copied()
+                                    .unwrap_or(egui::Color32::from_rgb(50, 200, 150)),
+                                // Image Recognition
+                                NodeType::GetPixelColor
+                                | NodeType::FindColor
+                                | NodeType::WaitForColor
+                                | NodeType::FindImage
+                                | NodeType::WaitForImage
+                                | NodeType::ImageSimilarity => self
+                                    .editor
+                                    .style
+                                    .header_colors
+                                    .get("Recognition")
+                                    .copied()
+                                    .unwrap_or(egui::Color32::from_rgb(200, 50, 150)),
                                 _ => self
                                     .editor
                                     .style
