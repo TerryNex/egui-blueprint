@@ -8,7 +8,7 @@ mod recorder;
 use chrono::Local;
 use editor::GraphEditor;
 use eframe::egui;
-use graph::{BlueprintGraph, Node, Port, VariableValue};
+use graph::{BlueprintGraph, Node, Port};
 use history::UndoStack;
 use node_types::{DataType, NodeType};
 use rdev;

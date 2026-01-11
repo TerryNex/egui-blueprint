@@ -1,7 +1,7 @@
 use super::RecordedAction;
 use crate::graph::{Node, Port, VariableValue};
 use crate::node_types::{DataType, NodeType};
-use rdev::{Button, Event, EventType};
+use rdev::{Button, EventType};
 use uuid::Uuid;
 
 pub fn map_action_to_node(action: RecordedAction, position: (f32, f32)) -> Option<Node> {
