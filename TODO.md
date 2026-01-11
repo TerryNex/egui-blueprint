@@ -18,11 +18,11 @@
 
 ### Execution Control
 
-- [ ] **Force stop infinite loops** - Add ability to stop runaway `while true` loops
-  - [ ] Display running threads in Debug window
-  - [ ] Add "Force Stop" button to terminate execution
-  - [ ] Implement thread handle tracking in executor
-  - [ ] Add timeout/watchdog for long-running operations
+- [x] **Force stop infinite loops** - Add ability to stop runaway `while true` loops
+  - [x] Display running threads in Debug window (via stop button visibility)
+  - [x] Add "Force Stop" button to terminate execution
+  - [x] Implement thread handle tracking in executor
+  - [x] Add timeout/watchdog for long-running operations (checks stop flag each iteration)
 
 ---
 

@@ -45,6 +45,8 @@ struct MyApp {
     start_time: std::time::Instant,
     undo_stack: UndoStack,
     log_receiver: Option<Receiver<String>>,
+    /// Stop handle for force stopping execution
+    stop_handle: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     // Debug window state
     system: System,
     frame_times: Vec<f32>,
@@ -75,6 +77,7 @@ impl Default for MyApp {
             start_time: std::time::Instant::now(),
             undo_stack: UndoStack::default(),
             log_receiver: None,
+            stop_handle: None,
             system: System::new_all(),
             frame_times: Vec::with_capacity(120),
             last_frame_time: std::time::Instant::now(),
@@ -393,12 +396,24 @@ impl eframe::App for MyApp {
                     self.show_load_window = !self.show_load_window;
                 }
                 // ... (Run button - keep as is, but I can't simple skip it if I am replacing the block)
-                if ui.button("Run").clicked() {
+                if ui.button("▶ Run").clicked() {
                     log::info!("Running graph (async)...");
                     self.start_time = std::time::Instant::now();
-                    self.log_receiver = Some(executor::Interpreter::run_async(&self.graph));
+                    let (rx, stop_handle) = executor::Interpreter::run_async_with_stop(&self.graph);
+                    self.log_receiver = Some(rx);
+                    self.stop_handle = Some(stop_handle);
                     self.logs
                         .push("[System] Async Execution Started".to_string());
+                }
+                // Force Stop button - only show when execution is running
+                if self.stop_handle.is_some() {
+                    if ui.button(egui::RichText::new("⏹ Stop").color(egui::Color32::RED)).clicked() {
+                        if let Some(ref handle) = self.stop_handle {
+                            handle.store(true, std::sync::atomic::Ordering::Relaxed);
+                            self.logs.push("[System] Force Stop requested".to_string());
+                        }
+                        self.stop_handle = None;
+                    }
                 }
                 ui.separator();
                 if ui.button("Debug").clicked() {

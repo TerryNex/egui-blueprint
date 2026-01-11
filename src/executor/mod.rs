@@ -36,15 +36,30 @@ use std::time::Duration;
 use uuid::Uuid;
 use xcap::Monitor;
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 pub struct ExecutionContext {
     pub variables: HashMap<String, VariableValue>,
+    /// Atomic flag to request execution stop from UI
+    pub stop_requested: Arc<AtomicBool>,
 }
 
 impl ExecutionContext {
     pub fn new() -> Self {
         Self {
             variables: HashMap::new(),
+            stop_requested: Arc::new(AtomicBool::new(false)),
         }
+    }
+    
+    /// Check if stop has been requested
+    pub fn should_stop(&self) -> bool {
+        self.stop_requested.load(Ordering::Relaxed)
+    }
+    
+    /// Request execution to stop
+    pub fn request_stop(&self) {
+        self.stop_requested.store(true, Ordering::Relaxed);
     }
 }
 
@@ -104,6 +119,65 @@ impl Interpreter {
         }
 
         rx
+    }
+    
+    /// Run graph asynchronously with a stop handle for UI control.
+    /// Returns tuple of (log_receiver, stop_handle).
+    /// Call `stop_handle.store(true, Ordering::Relaxed)` to request stop.
+    pub fn run_async_with_stop(graph: &BlueprintGraph) -> (Receiver<String>, Arc<AtomicBool>) {
+        let (tx, rx) = channel();
+
+        let tx_main = tx.clone();
+        tx_main
+            .send("Interpreter started (Async).".to_string())
+            .unwrap_or_default();
+
+        let graph = Arc::new(graph.clone());
+        let context = Arc::new(Mutex::new(ExecutionContext::new()));
+        
+        // Get reference to stop flag before spawning threads
+        let stop_handle = {
+            let ctx = context.lock().unwrap();
+            ctx.stop_requested.clone()
+        };
+
+        // Initialize variables
+        {
+            let mut ctx = context.lock().unwrap();
+            for (name, var) in &graph.variables {
+                ctx.variables
+                    .insert(name.clone(), var.initial_value.clone());
+            }
+        }
+
+        // Find all Event Tick nodes
+        let mut start_nodes = Vec::new();
+        for node in graph.nodes.values() {
+            if let NodeType::BlueprintFunction { name } = &node.node_type {
+                if name == "Event Tick" {
+                    start_nodes.push(node.id);
+                }
+            }
+        }
+
+        if start_nodes.is_empty() {
+            tx_main
+                .send("No 'Event Tick' node found. Execution aborted.".to_string())
+                .unwrap_or_default();
+            return (rx, stop_handle);
+        }
+
+        for start_id in start_nodes {
+            let graph_clone = graph.clone();
+            let context_clone = context.clone();
+            let tx_clone = tx.clone();
+
+            thread::spawn(move || {
+                Self::execute_flow(graph_clone, start_id, context_clone, tx_clone);
+            });
+        }
+
+        (rx, stop_handle)
     }
 
     pub fn execute_flow(
@@ -259,8 +333,19 @@ impl Interpreter {
                 NodeType::WhileLoop => {
                     let max_iterations = 1000; // Safety limit
                     let mut iteration = 0;
+                    let mut stopped = false;
 
                     while iteration < max_iterations {
+                        // Check if stop was requested
+                        {
+                            let ctx = context.lock().unwrap();
+                            if ctx.should_stop() {
+                                logger("WhileLoop: Stop requested by user".to_string());
+                                stopped = true;
+                                break;
+                            }
+                        }
+                        
                         let condition =
                             Self::evaluate_input(&graph, current_node_id, "Condition", &context)
                                 .unwrap_or(VariableValue::Boolean(false));
@@ -282,6 +367,11 @@ impl Interpreter {
                             );
                         }
                         iteration += 1;
+                    }
+                    
+                    // If stopped by user, break execution entirely
+                    if stopped {
+                        break;
                     }
 
                     // Continue to Done

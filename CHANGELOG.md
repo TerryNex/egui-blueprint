@@ -35,6 +35,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - Node header color pickers for all categories
   - 💾 Save button to persist settings
   - 🔄 Reset to Defaults button to restore all style settings
+- **Force Stop Execution** (Agent: Antigravity):
+  - ⏹ Stop button appears in toolbar when execution is running
+  - Immediately stops WhileLoop execution when clicked
+  - WhileLoop checks stop flag each iteration for responsive termination
+  - Uses atomic flag for thread-safe communication between UI and executor
 
 ### Improved
 
