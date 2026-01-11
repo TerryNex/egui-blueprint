@@ -113,6 +113,6 @@
     "use_gradient_connections": true,
     "font_size": 14.0
   },
-  "history_max_records": 1000,
+  "history_max_records": 100,
   "last_script_name": "untitled"
 }
