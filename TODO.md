@@ -30,10 +30,10 @@
 
 ### Style & Theming
 
-- [ ] **Complete node category colors** - Add missing colors in settings.json
-  - [ ] Add colors for: String, Logic, Comparison, Control Flow, I/O, Conversion, Screenshot, Image Recognition, Input Automation
-  - [ ] Ensure Nodes List window uses category colors
-  - [ ] Use pure colors (red, yellow, blue, green, cyan, purple) with transparency variations
+- [x] **Complete node category colors** - Add missing colors in settings.json
+  - [x] Add colors for: String, Logic, Comparison, Control Flow, I/O, Conversion, Screenshot, Image Recognition, Input Automation
+  - [x] Ensure Nodes List window uses category colors (uses EditorStyle)
+  - [x] Use pure colors (red, yellow, blue, green, cyan, purple) with transparency variations
 
 - [x] **Style settings reset** - Add reset button to restore default colors
   - [x] Store default style configuration (EditorStyle::default())

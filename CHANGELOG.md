@@ -40,6 +40,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - Immediately stops WhileLoop execution when clicked
   - WhileLoop checks stop flag each iteration for responsive termination
   - Uses atomic flag for thread-safe communication between UI and executor
+- **Complete Node Category Colors** (Agent: Antigravity):
+  - Added 18 color categories to EditorStyle::default()
+  - New categories: Logic, Comparison, ControlFlow, IO, Conversion, Screenshot, Recognition
+  - All categories with clear color assignments (red, blue, green, purple, cyan, etc.)
+  - Reset to Defaults now includes all categories
 
 ### Improved
 
