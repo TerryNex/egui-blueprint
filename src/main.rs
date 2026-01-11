@@ -698,9 +698,13 @@ impl eframe::App for MyApp {
         }
 
         // Style Settings Window
-        if self.show_style_window {
+        let mut show_style_window = self.show_style_window;
+        if show_style_window {
+            let mut should_save = false;
+            let mut should_reset = false;
+            
             egui::Window::new("🎨 Style Settings")
-                .open(&mut self.show_style_window)
+                .open(&mut show_style_window)
                 .resizable(true)
                 .default_width(300.0)
                 .show(ctx, |ui| {
@@ -733,17 +737,26 @@ impl eframe::App for MyApp {
                     ui.separator();
                     ui.horizontal(|ui| {
                         if ui.button("💾 Save").clicked() {
-                            self.save_settings();
-                            self.logs.push("[System] Style settings saved".to_string());
+                            should_save = true;
                         }
                         if ui.button("🔄 Reset to Defaults").clicked() {
-                            self.editor.style = editor::EditorStyle::default();
-                            self.save_settings();
-                            self.logs.push("[System] Style reset to defaults".to_string());
+                            should_reset = true;
                         }
                     });
                 });
+            
+            // Handle actions outside the closure to avoid borrow issues
+            if should_save {
+                self.save_settings();
+                self.logs.push("[System] Style settings saved".to_string());
+            }
+            if should_reset {
+                self.editor.style = editor::EditorStyle::default();
+                self.save_settings();
+                self.logs.push("[System] Style reset to defaults".to_string());
+            }
         }
+        self.show_style_window = show_style_window;
 
         let mut show_load_window = self.show_load_window;
         let mut loaded_script = None;
