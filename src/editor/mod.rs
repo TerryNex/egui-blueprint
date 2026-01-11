@@ -91,18 +91,32 @@ impl GraphEditor {
                     // Pinch zoom
                     let zoom_delta = i.zoom_delta();
                     if zoom_delta != 1.0 {
+                        let old_zoom = self.zoom;
+                        let new_zoom = (old_zoom * zoom_delta).clamp(0.1, 10.0);
+                        let actual_zoom_ratio = new_zoom / old_zoom;
+                        
                         let pointer = i.pointer.hover_pos().unwrap() - ui.max_rect().min.to_vec2();
-                        self.pan = pointer - (pointer - self.pan) * zoom_delta;
-                        self.zoom *= zoom_delta;
+                        self.pan = pointer - (pointer - self.pan) * actual_zoom_ratio;
+                        self.zoom = new_zoom;
                     }
 
                     // Scroll wheel zoom (only when not scrolling content)
                     let scroll = i.raw_scroll_delta;
                     if scroll.y != 0.0 && !i.modifiers.shift {
+                        let old_zoom = self.zoom;
                         let zoom_factor = 1.0 + scroll.y * 0.001;
+                        let new_zoom = (old_zoom * zoom_factor).clamp(0.1, 10.0);
+                        
+                        // Calculate the actual zoom change ratio
+                        let actual_zoom_ratio = new_zoom / old_zoom;
+                        
+                        // Get pointer position relative to canvas
                         let pointer = i.pointer.hover_pos().unwrap() - ui.max_rect().min.to_vec2();
-                        self.pan = pointer - (pointer - self.pan) * zoom_factor;
-                        self.zoom = (self.zoom * zoom_factor).clamp(0.1, 10.0);
+                        
+                        // Adjust pan to keep the point under the cursor stationary
+                        // Formula: new_pan = pointer - (pointer - old_pan) * (new_zoom / old_zoom)
+                        self.pan = pointer - (pointer - self.pan) * actual_zoom_ratio;
+                        self.zoom = new_zoom;
                     }
                 }
             }
@@ -125,9 +139,11 @@ impl GraphEditor {
                     } else {
                         ui.max_rect().size() / 2.0
                     };
-                    let delta = 1.1;
-                    self.pan = center - (center - self.pan) * delta;
-                    self.zoom *= delta;
+                    let old_zoom = self.zoom;
+                    let new_zoom = (old_zoom * 1.1).clamp(0.1, 10.0);
+                    let actual_ratio = new_zoom / old_zoom;
+                    self.pan = center - (center - self.pan) * actual_ratio;
+                    self.zoom = new_zoom;
                 }
                 if i.key_pressed(egui::Key::Minus) {
                     let center = if let Some(p) = i.pointer.hover_pos() {
@@ -135,13 +151,15 @@ impl GraphEditor {
                     } else {
                         ui.max_rect().size() / 2.0
                     };
-                    let delta = 0.9;
-                    self.pan = center - (center - self.pan) * delta;
-                    self.zoom *= delta;
+                    let old_zoom = self.zoom;
+                    let new_zoom = (old_zoom * 0.9).clamp(0.1, 10.0);
+                    let actual_ratio = new_zoom / old_zoom;
+                    self.pan = center - (center - self.pan) * actual_ratio;
+                    self.zoom = new_zoom;
                 }
                 if i.key_pressed(egui::Key::Num0) {
                     self.zoom = 1.0;
-                    self.pan = Vec2::ZERO;
+                    self.pan = Vec2::new(-5000.0, -5000.0); // Reset to initial pan with VIRTUAL_OFFSET
                 }
             }
         });
