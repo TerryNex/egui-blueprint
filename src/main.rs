@@ -357,13 +357,17 @@ impl eframe::App for MyApp {
                 }
                 ui.separator();
 
-                if ui.button("Style").clicked() {
-                    self.editor.show_settings = !self.editor.show_settings;
-                }
+                // if ui.button("Style").clicked() {
+                //     self.editor.show_settings = !self.editor.show_settings;
+                // }
 
                 ui.label("Script:");
-                ui.text_edit_singleline(&mut self.script_name);
-
+                ui.horizontal(|ui| {
+                    ui.set_min_width(100.0);
+                    
+                    ui.set_max_width(150.0);
+                    ui.text_edit_singleline(&mut self.script_name);
+                });
                 if ui.button("New").clicked() {
                     self.graph = graph::BlueprintGraph::default();
                     self.script_name = "untitled".to_string();
@@ -719,7 +723,9 @@ impl eframe::App for MyApp {
                     ui.heading("Node Header Colors");
                     egui::ScrollArea::vertical()
                         .max_height(200.0)
+                        
                         .show(ui, |ui| {
+                            ui.set_min_width(ui.available_width());
                             let categories: Vec<String> = self.editor.style.header_colors.keys().cloned().collect();
                             for category in categories {
                                 if let Some(color) = self.editor.style.header_colors.get_mut(&category) {

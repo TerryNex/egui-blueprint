@@ -2042,7 +2042,7 @@ impl Interpreter {
 
                     let (found_x, found_y, found) = match image::open(&image_path) {
                         Ok(template) => {
-                            let mut template = template.to_rgba8();
+                            let  template = template.to_rgba8();
                             logger(format!(
                                 "FindImage: Template loaded {}x{} pixels",
                                 template.width(), template.height()
