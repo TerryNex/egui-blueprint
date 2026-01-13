@@ -47,6 +47,10 @@ pub struct GraphEditor {
     pub recorder: crate::recorder::Recorder,
     /// Map of node ID to the time it was last executed (for fade-out effect)
     pub node_execution_times: std::collections::HashMap<Uuid, std::time::Instant>,
+    /// Cache for image template thumbnails (path -> TextureHandle)
+    pub image_thumbnail_cache: std::collections::HashMap<String, egui::TextureHandle>,
+    /// List of available template images (cached on first access)
+    pub available_templates: Option<Vec<String>>,
 }
 
 impl Default for GraphEditor {
@@ -70,6 +74,8 @@ impl Default for GraphEditor {
             editing_group_name: None,
             recorder: crate::recorder::Recorder::new(),
             node_execution_times: std::collections::HashMap::new(),
+            image_thumbnail_cache: std::collections::HashMap::new(),
+            available_templates: None,
         }
     }
 }
@@ -1833,6 +1839,67 @@ impl GraphEditor {
             y_offset += 20.0 * self.zoom;
         }
 
+        // Show thumbnail preview for FindImage/WaitForImage nodes
+        if matches!(
+            node.node_type,
+            crate::node_types::NodeType::FindImage | crate::node_types::NodeType::WaitForImage
+        ) {
+            if let Some(path_input) = node.inputs.iter().find(|p| p.name == "ImagePath") {
+                if let crate::graph::VariableValue::String(path) = &path_input.default_value {
+                    if !path.is_empty() {
+                        let thumb_size = 48.0 * self.zoom;
+                        let thumb_pos = screen_pos + Vec2::new(node_rect.width() - thumb_size - 5.0, y_offset+100.0);
+                        let thumb_rect = Rect::from_min_size(thumb_pos, Vec2::splat(thumb_size));
+                        
+                        // Draw thumbnail background
+                        ui.painter().rect_filled(thumb_rect, 4.0, Color32::from_gray(40));
+                        
+                        // Load and display thumbnail
+                        if let Some(tex) = self.image_thumbnail_cache.get(path) {
+                            ui.painter().image(
+                                tex.id(),
+                                thumb_rect,
+                                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                                Color32::WHITE
+                            );
+                        } else {
+                            // Try to load if not cached
+                            if let Ok(img) = image::open(path) {
+                                let thumb = img.thumbnail(48, 48);
+                                let rgba = thumb.to_rgba8();
+                                let size = [rgba.width() as _, rgba.height() as _];
+                                let pixels = rgba.into_raw();
+                                let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
+                                let handle = ui.ctx().load_texture(
+                                    path.clone(),
+                                    color_image,
+                                    egui::TextureOptions::default()
+                                );
+                                self.image_thumbnail_cache.insert(path.clone(), handle);
+                            } else {
+                                // Show placeholder for missing image
+                                ui.painter().text(
+                                    thumb_rect.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    "?",
+                                    egui::FontId::proportional(20.0 * self.zoom),
+                                    Color32::GRAY,
+                                );
+                            }
+                        }
+                        
+                        // Draw border
+                        ui.painter().rect_stroke(
+                            thumb_rect,
+                            4.0,
+                            Stroke::new(1.0, Color32::DARK_GRAY),
+                            egui::StrokeKind::Outside,
+                        );
+                    }
+                }
+            }
+        }
+
         for input in &mut node.inputs {
             let port_pos = screen_pos + Vec2::new(0.0, y_offset);
             let port_color = self.get_type_color(&input.data_type);
@@ -2003,14 +2070,172 @@ impl GraphEditor {
                                         );
                                     });
                                 } else {
-                                    if ui
-                                        .add(
-                                            egui::TextEdit::singleline(s)
-                                                .desired_width(70.0 * self.zoom),
-                                        )
-                                        .lost_focus()
-                                    {
-                                        c = true;
+                                    // Check for ImagePath input in image recognition nodes
+                                    let is_image_path = input.name == "ImagePath"
+                                        && matches!(
+                                            node.node_type,
+                                            crate::node_types::NodeType::FindImage
+                                                | crate::node_types::NodeType::WaitForImage
+                                        );
+
+                                    if is_image_path {
+                                        let popup_id = ui.make_persistent_id(format!(
+                                            "img_popup_{}_{}",
+                                            node.id, input.name
+                                        ));
+
+                                        ui.horizontal(|ui| {
+                                            // Text input for manual entry
+                                            let response = ui.add(
+                                                egui::TextEdit::singleline(s)
+                                                    .desired_width(50.0 * self.zoom),
+                                            );
+                                            if response.lost_focus() {
+                                                c = true;
+                                            }
+
+                                            // Dropdown button
+                                            if ui.add(egui::Button::new("📁").small()).clicked() {
+                                                // Refresh template list when opening
+                                                self.available_templates = None;
+                                                ui.memory_mut(|m| m.toggle_popup(popup_id));
+                                            }
+
+                                            egui::popup_below_widget(
+                                                ui,
+                                                popup_id,
+                                                &response,
+                                                egui::PopupCloseBehavior::CloseOnClickOutside,
+                                                |ui: &mut egui::Ui| {
+                                                    // Scan templates directory if not cached
+                                                    if self.available_templates.is_none() {
+                                                        let mut templates = Vec::new();
+                                                        if let Ok(entries) = std::fs::read_dir("scripts/templates") {
+                                                            for entry in entries.flatten() {
+                                                                let path = entry.path();
+                                                                if let Some(ext) = path.extension() {
+                                                                    if ext == "png" || ext == "jpg" || ext == "jpeg" {
+                                                                        templates.push(
+                                                                            path.to_string_lossy().to_string()
+                                                                        );
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        templates.sort();
+                                                        self.available_templates = Some(templates);
+                                                    }
+
+                                                    egui::Resize::default()
+                                                        .id_salt(popup_id)
+                                                        .min_size(Vec2::new(200.0, 280.0))
+                                                        .max_size(Vec2::new(
+                                                            350.0,
+                                                            ui.ctx().viewport_rect().height() - 100.0,
+                                                        ))
+                                                        .with_stroke(true)
+                                                        .show(ui, |ui| {
+                                                            ui.label("Select Image Template:");
+                                                            ui.separator();
+
+                                                            let search = s.to_lowercase();
+                                                            let templates = self.available_templates.clone().unwrap_or_default();
+
+                                                            if templates.is_empty() {
+                                                                ui.label("No images in scripts/templates/");
+                                                            } else {
+                                                                egui::ScrollArea::vertical()
+                                                                    // .max_height(300.0)
+                                                                    .max_height(ui.ctx().viewport_rect().height() - 100.0)
+                                                                    .show_rows(ui, 52.0, templates.len(), |ui, row_range| {
+                                                                        for idx in row_range {
+                                                                            if let Some(path) = templates.get(idx) {
+                                                                                let filename = std::path::Path::new(path)
+                                                                                    .file_name()
+                                                                                    .map(|f| f.to_string_lossy().to_string())
+                                                                                    .unwrap_or_else(|| path.clone());
+
+                                                                                // Filter by search
+                                                                                if !search.is_empty() && !filename.to_lowercase().contains(&search) {
+                                                                                    continue;
+                                                                                }
+                                                                                // each row use uniqe id
+                                                                                ui.push_id(path, |ui| {
+
+                                                                                    // start horizontal layout
+                                                                                    let inner_resp = ui.horizontal(|ui| {
+                                                                                            ui.set_min_width(ui.available_width());
+                                                                                        
+                                                                                            // Load thumbnail if not cached
+                                                                                            if let Some(tex) = self.image_thumbnail_cache.get(path) {
+                                                                                                ui.image(egui::load::SizedTexture::new(tex.id(), egui::vec2(48.0, 48.0)));
+                                                                                            } else {
+                                                                                                // Try to load image
+                                                                                                if let Ok(img) = image::open(path) {
+                                                                                                    let thumb = img.thumbnail(48, 48);
+                                                                                                    let rgba = thumb.to_rgba8();
+                                                                                                    let size = [rgba.width() as _, rgba.height() as _];
+                                                                                                    let pixels = rgba.into_raw();
+                                                                                                    let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
+                                                                                                    let handle = ui.ctx().load_texture(
+                                                                                                        path.clone(),
+                                                                                                        color_image,
+                                                                                                        egui::TextureOptions::default()
+                                                                                                    );
+                                                                                                    ui.image(egui::load::SizedTexture::new(handle.id(), egui::vec2(48.0, 48.0)));
+                                                                                                    self.image_thumbnail_cache.insert(path.clone(), handle);
+                                                                                                } else {
+                                                                                                    ui.label("⚠️");
+                                                                                                }
+                                                                                            }
+                                                                                            // if ui.add(egui::Button::new(&filename).frame(false)).clicked() {
+                                                                                            //     *s = path.clone();
+                                                                                            //     c = true;
+                                                                                            //     ui.close();
+                                                                                            // }
+                                                                                            ui.label(&filename); 
+                                                                                    });
+                                                                                    // get range
+                                                                                    let rect = inner_resp.response.rect;
+                                                                                    // set rectangle area response
+                                                                                    let response = ui.interact(rect, ui.id(), egui::Sense::click());
+                                                                                    // hover effect
+                                                                                    // if response.hovered() {
+                                                                                        
+                                                                                    //     // highlight row
+                                                                                    //     ui.ctx().layer_painter(egui::LayerId::background()).rect_filled(
+                                                                                    //         rect.expand(2.0),           
+                                                                                    //         egui::Rounding::same(4),  
+                                                                                    //         ui.visuals().widgets.hovered.bg_fill 
+                                                                                    //     );
+                                                                                    // }
+                                                                                    
+                                                                                
+                                                                                    // process click event
+                                                                                    if response.clicked() {
+                                                                                        *s = path.clone();
+                                                                                        c = true;
+                                                                                        ui.close(); // ui.close() usually use in Window or Menu, depending on context
+                                                                                    }
+                                                                                });
+                                                                            }
+                                                                        }
+                                                                    });
+                                                            }
+                                                        });
+                                                },
+                                            );
+                                        });
+                                    } else {
+                                        if ui
+                                            .add(
+                                                egui::TextEdit::singleline(s)
+                                                    .desired_width(70.0 * self.zoom),
+                                            )
+                                            .lost_focus()
+                                        {
+                                            c = true;
+                                        }
                                     }
                                 }
                             }
@@ -2020,7 +2245,14 @@ impl GraphEditor {
                                 }
                             }
                             VariableValue::Integer(i) => {
-                                if ui.add(egui::DragValue::new(i)).changed() {
+                                // Tolerance inputs should be clamped to 0-255 range
+                                let is_tolerance = input.name == "Tolerance";
+                                let drag = if is_tolerance {
+                                    egui::DragValue::new(i).range(0..=255)
+                                } else {
+                                    egui::DragValue::new(i)
+                                };
+                                if ui.add(drag).changed() {
                                     c = true;
                                 }
                             }

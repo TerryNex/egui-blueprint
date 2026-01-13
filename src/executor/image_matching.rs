@@ -4,20 +4,16 @@
 //! for the image recognition features.
 //!
 //! ## Key Functions
-//! - [`find_template_in_image`]: Find a template image within a screen capture
+//! - [`find_template_in_image`]: Find a template image within a screen capture using NCC
 //! - [`compare_images`]: Calculate similarity score between two images
 //!
 //! ## Algorithm Details
 //!
-//! ### Template Matching
-//! Uses multi-scale search to handle Retina displays:
-//! 1. Exact match at 1.0x scale
-//! 2. Downscaled match at 0.5x scale for Retina screens
-//!
-//! Optimizations:
-//! - Center pixel early rejection
-//! - Parallel search using Rayon
-//! - Alpha channel masking (pixels with alpha < 128 are ignored)
+//! ### Template Matching (NCC - Normalized Cross-Correlation)
+//! Uses `imageproc::template_matching` for robust matching:
+//! - Invariant to brightness changes
+//! - Handles compression artifacts
+//! - Returns confidence score (0.0 to 1.0)
 //!
 //! ### Image Comparison
 //! - Per-channel tolerance matching
@@ -25,28 +21,30 @@
 //!
 //! ## Dependencies
 //! - `image`: Image processing
-//! - `rayon`: Parallel iteration
+//! - `imageproc`: Template matching with NCC
 
-use image::RgbaImage;
-use rayon::prelude::*;
+use image::{GrayImage, RgbaImage};
+use imageproc::template_matching::{find_extremes, match_template, MatchTemplateMethod};
 
-/// Find a template image within a screen image using multi-scale matching.
+/// Find a template image within a screen region using Normalized Cross-Correlation.
 ///
 /// # Arguments
 /// * `screen` - The screen capture to search in
 /// * `template` - The template image to find
-/// * `tolerance` - Per-channel color difference tolerance (0-255)
-/// * `region_x`, `region_y` - Top-left corner of search region
+/// * `tolerance` - Matching threshold (0-255). Lower = stricter match required.
+///                 Converted to NCC threshold: threshold = 1.0 - (tolerance / 255.0)
+/// * `region_x`, `region_y` - Top-left corner of search region (in screen pixels)
 /// * `region_w`, `region_h` - Size of search region
 ///
 /// # Returns
-/// `(x, y, found)` - Center coordinates of found template (in logical pixels) and success flag
+/// `(x, y, found)` - Center coordinates of found template and success flag
 ///
-/// # Multi-Scale Handling
-/// For Retina displays (screen width > 2000), the function:
-/// 1. Searches at native resolution first
-/// 2. Falls back to 0.5x downscaled search
-/// 3. Returns coordinates in logical (non-Retina) space
+/// # Algorithm
+/// 1. Crop screen to specified region
+/// 2. Convert both images to grayscale
+/// 3. Apply NCC template matching
+/// 4. Find maximum correlation value
+/// 5. Compare against threshold derived from tolerance
 pub fn find_template_in_image(
     screen: &RgbaImage,
     template: &RgbaImage,
@@ -63,109 +61,57 @@ pub fn find_template_in_image(
         return (0, 0, false);
     }
 
-    // Helper function for parallel search on a specific screen buffer
-    let search_on_buffer = |search_screen: &RgbaImage, scale: u32| -> Option<(i64, i64)> {
-        let scr_w = search_screen.width();
-        let scr_h = search_screen.height();
+    // Clamp region to screen bounds
+    let scr_w = screen.width();
+    let scr_h = screen.height();
+    
+    let actual_x = region_x.min(scr_w.saturating_sub(1));
+    let actual_y = region_y.min(scr_h.saturating_sub(1));
+    let actual_w = region_w.min(scr_w.saturating_sub(actual_x));
+    let actual_h = region_h.min(scr_h.saturating_sub(actual_y));
 
-        // Adjust region for current scale
-        let r_x = region_x / scale;
-        let r_y = region_y / scale;
-        let r_w = region_w / scale;
-        let r_h = region_h / scale;
-
-        let end_x = (r_x + r_w).min(scr_w).saturating_sub(tpl_w);
-        let end_y = (r_y + r_h).min(scr_h).saturating_sub(tpl_h);
-
-        if r_x > end_x || r_y > end_y {
-            return None;
-        }
-
-        let found = (r_y..=end_y).into_par_iter().find_map_first(|sy| {
-            for sx in r_x..=end_x {
-                // Check if this position matches
-                let mut matches = true;
-                // Optimization: Check center pixel first
-                let center_pixel = search_screen.get_pixel(sx + tpl_w / 2, sy + tpl_h / 2);
-                let tpl_center = template.get_pixel(tpl_w / 2, tpl_h / 2);
-                if tpl_center[3] >= 128 {
-                    let dr = (center_pixel[0] as i32 - tpl_center[0] as i32).abs();
-                    let dg = (center_pixel[1] as i32 - tpl_center[1] as i32).abs();
-                    let db = (center_pixel[2] as i32 - tpl_center[2] as i32).abs();
-                    if dr > tolerance || dg > tolerance || db > tolerance {
-                        continue;
-                    }
-                }
-
-                // Full check
-                for ty in 0..tpl_h {
-                    for tx in 0..tpl_w {
-                        let tpl_pixel = template.get_pixel(tx, ty);
-                        if tpl_pixel[3] < 128 {
-                            continue;
-                        }
-
-                        let scr_pixel = search_screen.get_pixel(sx + tx, sy + ty);
-                        let dr = (scr_pixel[0] as i32 - tpl_pixel[0] as i32).abs();
-                        let dg = (scr_pixel[1] as i32 - tpl_pixel[1] as i32).abs();
-                        let db = (scr_pixel[2] as i32 - tpl_pixel[2] as i32).abs();
-
-                        if dr > tolerance || dg > tolerance || db > tolerance {
-                            matches = false;
-                            break;
-                        }
-                    }
-                    if !matches {
-                        break;
-                    }
-                }
-
-                if matches {
-                    return Some((sx, sy));
-                }
-            }
-            None
-        });
-
-        found.map(|(x, y)| {
-            let final_x = (x * scale) as i64 + (tpl_w * scale / 2) as i64;
-            let final_y = (y * scale) as i64 + (tpl_h * scale / 2) as i64;
-            (final_x, final_y)
-        })
-    };
-
-    // Pass 1: Try exact match (Scale 1x)
-    if let Some((x, y)) = search_on_buffer(screen, 1) {
-        // If screen > 2000, we are in Physical pixels.
-        // But output should be Logical for UI/Enigo.
-        // If Pass 1 matched on Retina, it means Template was also Physical (xcap).
-        // So we must divide result by 2 to get Logical.
-        if screen.width() > 2000 {
-            return (x / 2, y / 2, true);
-        }
-        return (x, y, true);
+    // Ensure region is large enough for template
+    if actual_w < tpl_w || actual_h < tpl_h {
+        return (0, 0, false);
     }
 
-    // Pass 2: Try Downscaled match (Scale 2x)
-    // Cases handled:
-    // - Retina screen (@2x), Template @1x (e.g. from screencapture)
-    if screen.width() > 2000 {
-        // Downscale screen by 2x
-        let new_w = screen.width() / 2;
-        let new_h = screen.height() / 2;
-        let downscaled = image::imageops::resize(
-            screen,
-            new_w,
-            new_h,
-            image::imageops::FilterType::Triangle,
-        );
+    // Crop screen to region
+    let region = image::imageops::crop_imm(screen, actual_x, actual_y, actual_w, actual_h).to_image();
 
-        if let Some((x, y)) = search_on_buffer(&downscaled, 2) {
-            return (x, y, true);
-        }
+    // Convert to grayscale for NCC matching
+    let screen_gray: GrayImage = image::imageops::grayscale(&region);
+    let template_gray: GrayImage = image::imageops::grayscale(template);
+
+    // Perform NCC template matching
+    let result = match_template(
+        &screen_gray,
+        &template_gray,
+        MatchTemplateMethod::CrossCorrelationNormalized,
+    );
+
+    // Find the maximum correlation value
+    let extremes = find_extremes(&result);
+
+    // Convert tolerance (0-255) to NCC threshold (0.0-1.0)
+    // tolerance 0 = threshold 1.0 (perfect match required)
+    // tolerance 255 = threshold 0.0 (any match accepted)
+    // For practical use: tolerance 10 → threshold ~0.96
+    let tolerance_clamped = tolerance.clamp(0, 255) as f32;
+    let threshold = 1.0 - (tolerance_clamped / 255.0);
+
+    // NCC returns values in [0, 1] for CrossCorrelationNormalized
+    // Higher value = better match
+    if extremes.max_value >= threshold {
+        let (local_x, local_y) = extremes.max_value_location;
+        
+        // Convert back to screen coordinates (add region offset and template center)
+        let center_x = actual_x as i64 + local_x as i64 + (tpl_w / 2) as i64;
+        let center_y = actual_y as i64 + local_y as i64 + (tpl_h / 2) as i64;
+        
+        (center_x, center_y, true)
+    } else {
+        (0, 0, false)
     }
-
-    (0, 0, false)
 }
 
 /// Compare two images and return similarity score (0.0 - 1.0).

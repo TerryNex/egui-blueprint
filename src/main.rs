@@ -71,6 +71,8 @@ struct MyApp {
     global_stop_rx: std::sync::mpsc::Receiver<()>,
     // Deduplication state
     last_recorded_event_type: Option<rdev::EventType>,
+    // Cursor info overlay - shows position and pixel color
+    show_cursor_info: bool,
 }
 
 impl Default for MyApp {
@@ -152,6 +154,7 @@ impl Default for MyApp {
             show_record_options: false,
             global_stop_rx: stop_rx,
             last_recorded_event_type: None,
+            show_cursor_info: false,
         };
         let _ = std::fs::create_dir_all("scripts");
         // Load settings first (may auto-load last script)
@@ -603,6 +606,10 @@ impl eframe::App for MyApp {
                     }
                     
                     ui.separator();
+                    ui.checkbox(&mut self.show_cursor_info, "Show Cursor Info")
+                        .on_hover_text("Display cursor coordinates and pixel color (like screenshot tool)");
+                    
+                    ui.separator();
                     if ui.button("Close").clicked() {
                         self.show_record_options = false;
                     }
@@ -656,49 +663,33 @@ impl eframe::App for MyApp {
 
             match final_action.event.event_type {
                 rdev::EventType::ButtonPress(button) => {
-                    let (x, y) = (
-                        final_action.cursor_position.0 as i64,
-                        final_action.cursor_position.1 as i64,
-                    );
-                    let btn_str = btn_to_str(button);
-                    
-                    // Insert delay before this action if enabled
-                    if self.record_delays {
-                        if let Some(last_time) = self.last_event_time {
-                            let elapsed = last_time.elapsed().as_secs_f32();
-                            if elapsed > 0.05 {
-                                let delay_node = recorder::mapper::create_delay_node((0.0, 0.0), elapsed);
-                                nodes_to_add.push(delay_node);
-                            }
-                        }
-                    }
-                    self.last_event_time = Some(std::time::Instant::now());
-                    
-                    // Create MouseDown node
-                    let node = recorder::mapper::create_mouse_btn_node(
-                        NodeType::MouseDown,
-                        (0.0, 0.0),
-                        btn_str,
-                        x,
-                        y,
-                    );
-                    nodes_to_add.push(node);
-                    
-                    // Store press info for release comparison
+                    // Store press info for release comparison - don't create node yet
+                    // We'll decide on Click vs Drag when button is released
                     self.pending_mouse_down = Some((
                         std::time::Instant::now(),
                         final_action.cursor_position.0,
                         final_action.cursor_position.1,
                         button,
                     ));
-                    self.is_dragging = true;
+                    self.is_dragging = false; // Will be determined on release
                 }
                 rdev::EventType::ButtonRelease(button) => {
-                    let (x, y) = (
-                        final_action.cursor_position.0 as i64,
-                        final_action.cursor_position.1 as i64,
-                    );
-                    let btn_str = btn_to_str(button);
+                    let release_x = final_action.cursor_position.0;
+                    let release_y = final_action.cursor_position.1;
+                    
+                    // Check if this was a quick click (< 200ms, minimal movement < 5px)
+                    let is_click = if let Some((press_time, press_x, press_y, press_btn)) = self.pending_mouse_down {
+                        if press_btn == button {
+                            let elapsed_ms = press_time.elapsed().as_millis();
+                            let dx = (release_x - press_x).abs();
+                            let dy = (release_y - press_y).abs();
+                            elapsed_ms < 200 && dx < 5.0 && dy < 5.0
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
 
                     // Insert delay before this action if enabled
                     if self.record_delays {
@@ -712,20 +703,56 @@ impl eframe::App for MyApp {
                     }
                     self.last_event_time = Some(std::time::Instant::now());
 
+                    if is_click {
+                        // Create Click or RightClick node
+                        let node_type = match button {
+                            rdev::Button::Right => NodeType::RightClick,
+                            _ => NodeType::Click,
+                        };
+                        let (x, y) = if let Some((_, press_x, press_y, _)) = self.pending_mouse_down {
+                            (press_x as i64, press_y as i64)
+                        } else {
+                            (release_x as i64, release_y as i64)
+                        };
+                        let node = recorder::mapper::create_click_node(
+                            node_type,
+                            (0.0, 0.0),
+                            x,
+                            y,
+                        );
+                        nodes_to_add.push(node);
+                    } else {
+                        // Drag operation: create MouseDown + MouseUp pair
+                        let btn_str = btn_to_str(button);
+                        
+                        // Create MouseDown at press position
+                        if let Some((_, press_x, press_y, _)) = self.pending_mouse_down {
+                            let down_node = recorder::mapper::create_mouse_btn_node(
+                                NodeType::MouseDown,
+                                (0.0, 0.0),
+                                btn_str.clone(),
+                                press_x as i64,
+                                press_y as i64,
+                            );
+                            nodes_to_add.push(down_node);
+                        }
+                        
+                        // Create MouseUp at release position
+                        let up_node = recorder::mapper::create_mouse_btn_node(
+                            NodeType::MouseUp,
+                            (0.0, 0.0),
+                            btn_str,
+                            release_x as i64,
+                            release_y as i64,
+                        );
+                        nodes_to_add.push(up_node);
+                    }
+
                     // Clear pending state
                     self.pending_mouse_down = None;
                     self.is_dragging = false;
-                    
-                    // Create MouseUp node with current position
-                    let node = recorder::mapper::create_mouse_btn_node(
-                        NodeType::MouseUp,
-                        (0.0, 0.0),
-                        btn_str,
-                        x,
-                        y,
-                    );
-                    nodes_to_add.push(node);
                 }
+
                 _ => {
                     // Prevent duplicate processing of Button events if they fall through
                     if matches!(final_action.event.event_type, rdev::EventType::ButtonPress(_) | rdev::EventType::ButtonRelease(_)) {
@@ -1572,6 +1599,73 @@ impl eframe::App for MyApp {
                     }
                 });
             });
+
+        // Cursor Info Overlay - floating panel at bottom-right showing cursor position and pixel color
+        if self.show_cursor_info {
+            // Request continuous repaint when cursor info is shown
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+            
+            egui::Window::new("Cursor Info")
+                .title_bar(true)
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-10.0, -10.0))
+                .show(ctx, |ui| {
+                    // Get cursor position using enigo
+                    use enigo::{Enigo, Settings, Mouse};
+                    if let Ok(enigo) = Enigo::new(&Settings::default()) {
+                        if let Ok((x, y)) = enigo.location() {
+                            ui.horizontal(|ui| {
+                                ui.label("Position:");
+                                ui.monospace(format!("X: {}, Y: {}", x, y));
+                            });
+                            
+                            // Get pixel color using xcap
+                            let color_info = (|| -> Option<(u8, u8, u8, String)> {
+                                use xcap::Monitor;
+                                let monitors = Monitor::all().ok()?;
+                                let monitor = monitors.first()?;
+                                let image = monitor.capture_image().ok()?;
+                                
+                                // Adjust coordinates for monitor bounds
+                                let mon_x = monitor.x().ok()?;
+                                let mon_y = monitor.y().ok()?;
+                                let monitor_x = (x - mon_x) as u32;
+                                let monitor_y = (y - mon_y) as u32;
+
+                                
+                                if monitor_x < image.width() && monitor_y < image.height() {
+                                    let pixel = image.get_pixel(monitor_x, monitor_y);
+                                    let r = pixel[0];
+                                    let g = pixel[1];
+                                    let b = pixel[2];
+                                    let hex = format!("#{:02X}{:02X}{:02X}", r, g, b);
+                                    Some((r, g, b, hex))
+                                } else {
+                                    None
+                                }
+                            })();
+                            
+                            if let Some((r, g, b, hex)) = color_info {
+                                ui.horizontal(|ui| {
+                                    ui.label("Color:");
+                                    // Show color preview
+                                    let (rect, _) = ui.allocate_exact_size(
+                                        egui::vec2(16.0, 16.0),
+                                        egui::Sense::hover()
+                                    );
+                                    ui.painter().rect_filled(
+                                        rect,
+                                        2.0,
+                                        egui::Color32::from_rgb(r, g, b)
+                                    );
+                                    ui.monospace(hex);
+                                });
+                            }
+                        }
+                    }
+                });
+        }
 
         egui::CentralPanel::default().show(ctx, |ui| {
             // Undo/Redo Input

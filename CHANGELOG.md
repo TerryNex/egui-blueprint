@@ -4,6 +4,37 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased] - 2026-01-13
+
+### Added
+
+- **Smart Click Detection During Recording** (Agent: Antigravity):
+  - Quick press/release (< 200ms, < 5px movement) automatically creates `Click` or `RightClick` nodes
+  - Drag operations (> 200ms or > 5px movement) create `MouseDown` + `MouseUp` pair as before
+  - Left button → `Click` node, Right button → `RightClick` node
+- **Cursor Info Overlay** (Agent: Antigravity):
+  - New "Show Cursor Info" checkbox in Recording Options (⚙)
+  - Floating panel at bottom-right showing real-time cursor position (X, Y)
+  - Displays pixel color at cursor with hex value (#RRGGBB) and color preview swatch
+  - Similar to screenshot tool crosshair display
+- **FindImage Node Enhancements** (Agent: Antigravity):
+  - **Tolerance Validation**: Input clamped to 0-255 range (prevents negative/invalid values)
+  - **ImagePath Selector**: 📁 button opens dropdown with images from `scripts/templates/`
+    - Thumbnails lazy-loaded with virtual scrolling for performance
+    - Type to filter by filename
+    - Cached thumbnails to avoid reloading
+  - **Node Thumbnail Preview**: 48x48 thumbnail displayed on FindImage/WaitForImage nodes
+    - Quick visual identification when working with many image search nodes
+
+### Improved
+
+- **FindImage Template Matching Algorithm** (Agent: Antigravity):
+  - Replaced pixel-by-pixel matching with **NCC (Normalized Cross-Correlation)** via `imageproc` crate
+  - Much more robust against brightness changes and compression artifacts
+  - **Region-based cropping**: Only captures specified region, not full screen → faster matching
+  - Removed hardcoded Retina 2x scaling for cross-platform compatibility
+  - Tolerance now maps to NCC threshold: 0 = exact match, 255 = any match
+
 ## [Unreleased] - 2026-01-12
 
 ### Added
