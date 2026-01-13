@@ -45,12 +45,32 @@ pub struct Node {
     pub position: (f32, f32),
     pub inputs: Vec<Port>,
     pub outputs: Vec<Port>,
-    /// Z-order for rendering: higher values are drawn on top. Updated when node is clicked.
+    /// Z-order for rendering: higher values are drawn on top.
     #[serde(default)]
     pub z_order: u64,
-    /// Custom display name for the node. If None, uses default type name.
+    /// Custom display name for the node.
     #[serde(default)]
     pub display_name: Option<String>,
+    /// Whether this node is enabled for execution.
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+    /// Group ID for visual grouping of nodes.
+    #[serde(default)]
+    pub group_id: Option<Uuid>,
+    /// Note text content (for Notes node type only)
+    #[serde(default)]
+    pub note_text: String,
+    /// Note size (width, height) for Notes node
+    #[serde(default = "default_note_size")]
+    pub note_size: (f32, f32),
+}
+
+fn default_note_size() -> (f32, f32) {
+    (200.0, 100.0)
+}
+
+fn default_enabled() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

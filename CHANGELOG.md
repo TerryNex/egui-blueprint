@@ -4,6 +4,56 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased] - 2026-01-12
+
+### Added
+
+- **Visual Execution Highlighting** (Agent: Antigravity):
+  - **Real-time Feedback**: Executing nodes glow green during execution
+  - **Fade-Out Effect**: Highlights fade out over 0.5s to show execution path "trail"
+  - **Performance**: Uses event-based communication to minimize overhead
+- **Flow Control Features** (Agent: Antigravity):
+  - **WaitForCondition Node**: Blocks execution until condition becomes true
+    - Configurable poll interval and timeout (0 = no timeout)
+    - Outputs: Next (flow), Timed Out (bool)
+  - **ForLoopAsync Node**: For loop that waits for Continue signal before each iteration
+    - Continue input port for async iteration control
+    - Useful for step-by-step debugging or user-controlled iteration
+  - **Event Tick Enable/Disable Toggle**: Visual checkbox on Event Tick nodes
+    - Click to enable/disable execution of specific Event Tick nodes
+    - Disabled nodes shown with gray checkbox
+- **StringTrim Node**: Trim whitespace from strings with mode options
+  - Mode 0 (Both): Trim start and end (default)
+  - Mode 1 (Start): Trim leading whitespace only
+  - Mode 2 (End): Trim trailing whitespace only
+  - Mode 3 (All): Remove ALL whitespace including internal
+- **GetTimestamp Node**: Returns current Unix timestamp
+  - Milliseconds toggle: true = 13-digit ms timestamp, false = 10-digit seconds
+- **Recording Enhancements**:
+  - Auto-group recorded nodes when recording stops
+  - Record Delays toggle (default ON): Insert Delay nodes between all actions
+  - Recording Options popup: ⚙ button opens settings window
+  - Toolbar reorganized to prevent overflow
+- **Notes Node**: Add comment/memo nodes to the graph for documentation
+
+### Fixed
+
+- **Stop Button Visibility Bug**: Stop button now auto-clears when execution completes
+  - Previously remained visible until manually clicked
+  - Now detects channel disconnection on execution completion
+- **TypeString Node**: Fixed character typing not working on macOS
+  - Changed from Key::Unicode to enigo.text() for each character
+  - More reliable cross-platform character input
+- **Recorder MouseUp Position**: Fixed MouseUp showing same position as MouseDown during drag
+  - Now uses enigo to query real-time cursor position for all events
+  - MouseUp correctly shows release position instead of click position
+- **Recorder Duplicate MouseDown**: Fixed creating duplicate MouseDown when releasing mouse
+  - Removed buggy timeout logic that was emitting extra MouseDown nodes
+  - Simplified click/drag detection logic
+- **Recorder Mouse Move Toggle**: Added "Record Moves" checkbox
+  - Default OFF: prevents flooding graph with MouseMove nodes
+  - Enable when you need to record mouse movement paths
+
 ## [Unreleased] - 2026-01-11
 
 ### Refactored

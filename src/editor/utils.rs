@@ -174,3 +174,8 @@ pub fn lerp_color(c1: Color32, c2: Color32, t: f32) -> Color32 {
     let a = (c1.a() as f32 * (1.0 - t) + c2.a() as f32 * t) as u8;
     Color32::from_rgba_premultiplied(r, g, b, a)
 }
+
+/// Linear interpolation between two values.
+pub fn lerp(a: f32, b: f32, t: f32) -> f32 {
+    a + (b - a) * t
+}

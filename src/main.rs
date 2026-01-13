@@ -12,6 +12,7 @@ use graph::{BlueprintGraph, Node, Port};
 use history::UndoStack;
 use node_types::{DataType, NodeType};
 use rdev;
+use executor::events::ExecutionEvent;
 use std::sync::mpsc::Receiver;
 use sysinfo::{Pid, ProcessesToUpdate, System};
 use uuid::Uuid;
@@ -44,7 +45,7 @@ struct MyApp {
     show_debug_window: bool,
     start_time: std::time::Instant,
     undo_stack: UndoStack,
-    log_receiver: Option<Receiver<String>>,
+    log_receiver: Option<Receiver<ExecutionEvent>>,
     /// Stop handle for force stopping execution
     stop_handle: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     // Debug window state
@@ -55,17 +56,74 @@ struct MyApp {
     use_relative_coords: bool,
     last_recorded_node_id: Option<Uuid>,
     // Mouse buffering for Click/Drag distinction
-    pending_mouse_down: Option<(std::time::Instant, f64, f64, rdev::Button)>, // time, x, y, button
-    is_dragging: bool, // True when mouse button is held down (for drag recording)
+    pending_mouse_down: Option<(std::time::Instant, f64, f64, rdev::Button)>,
+    is_dragging: bool,
     // Nodes window state
     nodes_search_filter: String,
-    nodes_sort_mode: u8, // 0 = default, 1 = alphabetical, 2 = by type
+    nodes_sort_mode: u8,
     last_event_time: Option<std::time::Instant>,
     show_style_window: bool,
+    // Recording enhancements
+    recorded_node_ids: Vec<Uuid>,     // IDs of nodes created during current recording session
+    record_delays: bool,               // Whether to insert Delay nodes between actions
+    show_record_options: bool,         // Show recording options popup
+    // Global hotkey receiver for F3 stop
+    global_stop_rx: std::sync::mpsc::Receiver<()>,
+    // Deduplication state
+    last_recorded_event_type: Option<rdev::EventType>,
 }
 
 impl Default for MyApp {
     fn default() -> Self {
+        // Setup global F3 hotkey listener for force stop
+        // Setup global hotkey listener for force stop
+        let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
+        std::thread::spawn(move || {
+            let mut ctrl_pressed = false;
+            let mut meta_pressed = false;
+            
+            if let Err(error) = rdev::listen(move |event| {
+                match event.event_type {
+                    rdev::EventType::KeyPress(key) => {
+                        match key {
+                            rdev::Key::F3 => {
+                                println!("[System] F3 Pressed - sending stop signal");
+                                let _ = stop_tx.send(());
+                            }
+                            rdev::Key::ControlLeft | rdev::Key::ControlRight => {
+                                ctrl_pressed = true;
+                            }
+                            rdev::Key::MetaLeft | rdev::Key::MetaRight => {
+                                meta_pressed = true;
+                            }
+                            rdev::Key::KeyZ => {
+                                // Check for Ctrl+Z or Cmd+Z (Meta+Z)
+                                if ctrl_pressed || meta_pressed {
+                                    println!("[System] Ctrl/Cmd+Z Pressed - sending stop signal");
+                                    let _ = stop_tx.send(());
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    rdev::EventType::KeyRelease(key) => {
+                        match key {
+                             rdev::Key::ControlLeft | rdev::Key::ControlRight => {
+                                ctrl_pressed = false;
+                            }
+                            rdev::Key::MetaLeft | rdev::Key::MetaRight => {
+                                meta_pressed = false;
+                            }
+                            _ => {}
+                        }
+                    }
+                    _ => {}
+                }
+            }) {
+                eprintln!("[Error] Global hotkey listener failed: {:?}", error);
+            }
+        });
+        
         let mut app = Self {
             graph: BlueprintGraph::default(),
             editor: GraphEditor::default(),
@@ -89,6 +147,11 @@ impl Default for MyApp {
             nodes_sort_mode: 0,
             last_event_time: None,
             show_style_window: false,
+            recorded_node_ids: Vec::new(),
+            record_delays: true,
+            show_record_options: false,
+            global_stop_rx: stop_rx,
+            last_recorded_event_type: None,
         };
         let _ = std::fs::create_dir_all("scripts");
         // Load settings first (may auto-load last script)
@@ -167,6 +230,10 @@ impl MyApp {
                 }],
                 z_order: 0,
                 display_name: None,
+                enabled: true,
+                group_id: None,
+                note_text: String::new(),
+                note_size: (200.0, 100.0),
             },
         );
 
@@ -198,6 +265,10 @@ impl MyApp {
                 }],
                 z_order: 1,
                 display_name: None,
+                enabled: true,
+                group_id: None,
+                note_text: String::new(),
+                note_size: (200.0, 100.0),
             },
         );
     }
@@ -283,6 +354,10 @@ impl MyApp {
             outputs,
             z_order,
             display_name: Some("Quick Capture".into()),
+            enabled: true,
+            group_id: None,
+            note_text: String::new(),
+            note_size: (200.0, 100.0),
         };
         
         self.graph.nodes.insert(node_id, node);
@@ -297,6 +372,22 @@ impl MyApp {
 
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Request continuous repaint while recording or executing
+        // Use a small interval (100ms) to reduce CPU usage while staying responsive
+        if self.editor.recorder.is_recording() || self.log_receiver.is_some() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
+        
+        // Check for global F3 hotkey to force stop execution
+        while let Ok(()) = self.global_stop_rx.try_recv() {
+            if let Some(ref handle) = self.stop_handle {
+                handle.store(true, std::sync::atomic::Ordering::Relaxed);
+                self.logs.push("[System] F3 - Force Stop requested".to_string());
+            }
+            self.stop_handle = None;
+            self.log_receiver = None;
+        }
+        
         // Verification Test Trigger (Added for Drag Debugging)
         if ctx.input(|i| i.key_pressed(egui::Key::F6)) {
              crate::executor::test_drag_verification::run_drag_verification();
@@ -419,13 +510,13 @@ impl eframe::App for MyApp {
                         self.stop_handle = None;
                     }
                 }
-                ui.separator();
-                if ui.button("Debug").clicked() {
-                    self.show_debug_window = !self.show_debug_window;
-                }
-                if ui.button("🎨 Style").clicked() {
-                    self.show_style_window = !self.show_style_window;
-                }
+                // ui.separator();
+                // if ui.button("Debug").clicked() {
+                //     self.show_debug_window = !self.show_debug_window;
+                // }
+                // if ui.button("🎨 Style").clicked() {
+                //     self.show_style_window = !self.show_style_window;
+                // }
 
                 ui.separator();
                 let is_recording = self.editor.recorder.is_recording();
@@ -446,24 +537,77 @@ impl eframe::App for MyApp {
                     if is_recording {
                         self.editor.recorder.stop();
                         self.logs.push("[System] Recording Stopped".into());
+                        
+                        // Auto-group recorded nodes
+                        if !self.recorded_node_ids.is_empty() {
+                            let group_id = Uuid::new_v4();
+                            for node_id in &self.recorded_node_ids {
+                                if let Some(node) = self.graph.nodes.get_mut(node_id) {
+                                    node.group_id = Some(group_id);
+                                }
+                            }
+                            self.logs.push(format!("[System] Created group with {} recorded nodes", self.recorded_node_ids.len()));
+                            self.recorded_node_ids.clear();
+                        }
+                        
                         self.last_recorded_node_id = None;
                         self.pending_mouse_down = None;
                     } else {
                         self.editor.recorder.start();
                         self.logs.push("[System] Recording Started...".into());
+                        self.recorded_node_ids.clear(); // Clear for new session
                         self.last_recorded_node_id = None;
                         self.last_event_time = None;
                     }
                 }
 
-                // Quick Capture Button - captures region and creates FindImage node
-                if ui.button("📸 Capture").on_hover_text("Capture screen region and create FindImage node").clicked() {
-                    self.perform_quick_capture(ctx);
+                // Recording Options button (⚙ gear icon)
+                if ui.button("⚙").on_hover_text("Recording Options").clicked() {
+                    self.show_record_options = !self.show_record_options;
                 }
 
-                ui.checkbox(&mut self.use_relative_coords, "Relative Coords");
+                // Quick Capture Button
+                if ui.button("📸").on_hover_text("Capture screen region").clicked() {
+                    self.perform_quick_capture(ctx);
+                }
+                
+                ui.separator();
+                if ui.button("Debug").clicked() {
+                    self.show_debug_window = !self.show_debug_window;
+                }
+                if ui.button("🎨").on_hover_text("Style Settings").clicked() {
+                    self.show_style_window = !self.show_style_window;
+                }
             });
         });
+        
+        // Recording Options Popup Window
+        if self.show_record_options {
+            egui::Window::new("Recording Options")
+                .collapsible(true)
+                .resizable(false)
+                .default_width(200.0)
+                .show(ctx, |ui| {
+                    ui.checkbox(&mut self.record_delays, "Record Delays")
+                        .on_hover_text("Insert Delay nodes between actions (recommended)");
+                    
+                    ui.checkbox(&mut self.use_relative_coords, "Relative Coords")
+                        .on_hover_text("Use coordinates relative to active window");
+                    
+                    let mut record_moves = self.editor.recorder.is_record_mouse_move();
+                    if ui.checkbox(&mut record_moves, "Record Mouse Moves")
+                        .on_hover_text("Record mouse movement (creates many nodes)")
+                        .changed()
+                    {
+                        self.editor.recorder.set_record_mouse_move(record_moves);
+                    }
+                    
+                    ui.separator();
+                    if ui.button("Close").clicked() {
+                        self.show_record_options = false;
+                    }
+                });
+        }
 
         // Process Recorded Events
         while let Ok(action) = self.editor.recorder.rx.try_recv() {
@@ -473,6 +617,7 @@ impl eframe::App for MyApp {
 
             // 2. Click vs Drag Logic
             let mut nodes_to_add = Vec::new();
+
 
             // Helper to convert Button to string
             fn btn_to_str(b: rdev::Button) -> String {
@@ -484,35 +629,52 @@ impl eframe::App for MyApp {
                 }
             }
 
-            // Check timeout for pending mouse down
-            if let Some((time, start_x, start_y, btn)) = self.pending_mouse_down.take() {
-                if time.elapsed().as_millis() > 200 {
-                    // Timeout -> Emit MouseDown
-                    let node = recorder::mapper::create_mouse_btn_node(
-                        NodeType::MouseDown,
-                        (0.0, 0.0), // Pos set later
-                        btn_to_str(btn),
-                        start_x as i64,
-                        start_y as i64,
-                    );
-                    nodes_to_add.push(node);
-                    // We consumed pending, set to None (already taken)
+            // Deduplication Logic
+            // rdev on macOS can sometimes send duplicate events (e.g. 2 press events).
+            // We check if the event type matches the last one and is within a small time window (50ms).
+            let current_type = final_action.event.event_type; // EventType is likely Copy/Clone
+            let is_duplicate = if let Some(last_type) = self.last_recorded_event_type {
+                if last_type == current_type {
+                    if let Some(last_time) = self.last_event_time {
+                         last_time.elapsed().as_millis() < 50
+                    } else {
+                        false
+                    }
                 } else {
-                    // Put it back if not expired? No, we check every frame.
-                    // If not expired, keep waiting.
-                    self.pending_mouse_down = Some((time, start_x, start_y, btn));
+                    false
                 }
+            } else {
+                false
+            };
+
+            if is_duplicate {
+                // self.logs.push(format!("[Record] Ignored duplicate event: {:?}", current_type));
+                continue;
             }
+            
+            self.last_recorded_event_type = Some(current_type);
 
             match final_action.event.event_type {
                 rdev::EventType::ButtonPress(button) => {
-                    // Emit MouseDown immediately and start dragging
                     let (x, y) = (
                         final_action.cursor_position.0 as i64,
                         final_action.cursor_position.1 as i64,
                     );
                     let btn_str = btn_to_str(button);
                     
+                    // Insert delay before this action if enabled
+                    if self.record_delays {
+                        if let Some(last_time) = self.last_event_time {
+                            let elapsed = last_time.elapsed().as_secs_f32();
+                            if elapsed > 0.05 {
+                                let delay_node = recorder::mapper::create_delay_node((0.0, 0.0), elapsed);
+                                nodes_to_add.push(delay_node);
+                            }
+                        }
+                    }
+                    self.last_event_time = Some(std::time::Instant::now());
+                    
+                    // Create MouseDown node
                     let node = recorder::mapper::create_mouse_btn_node(
                         NodeType::MouseDown,
                         (0.0, 0.0),
@@ -522,14 +684,14 @@ impl eframe::App for MyApp {
                     );
                     nodes_to_add.push(node);
                     
-                    // Set drag state
-                    self.is_dragging = true;
+                    // Store press info for release comparison
                     self.pending_mouse_down = Some((
                         std::time::Instant::now(),
                         final_action.cursor_position.0,
                         final_action.cursor_position.1,
                         button,
                     ));
+                    self.is_dragging = true;
                 }
                 rdev::EventType::ButtonRelease(button) => {
                     let (x, y) = (
@@ -538,53 +700,48 @@ impl eframe::App for MyApp {
                     );
                     let btn_str = btn_to_str(button);
 
-                    // Check if this was a quick click (same position, <200ms)
-                    if let Some((time, start_x, start_y, start_btn)) = self.pending_mouse_down.take() {
-                        let dist = ((final_action.cursor_position.0 - start_x).powi(2)
-                            + (final_action.cursor_position.1 - start_y).powi(2))
-                        .sqrt();
-                        let same_btn = btn_str == btn_to_str(start_btn);
-                        let elapsed_ms = time.elapsed().as_millis();
-
-                        // WORKAROUND: rdev on macOS fires ButtonRelease almost immediately after ButtonPress.
-                        if elapsed_ms < 100 && dist < 5.0 && same_btn {
-                            // Likely rdev artifact, put pending back and ignore this release
-                            self.pending_mouse_down = Some((time, start_x, start_y, start_btn));
-                            // Also keep is_dragging true since we're still waiting for real release
-                        } else {
-                            // Real release - emit MouseUp
-                            let node = recorder::mapper::create_mouse_btn_node(
-                                NodeType::MouseUp,
-                                (0.0, 0.0),
-                                btn_str,
-                                x,
-                                y,
-                            );
-                            nodes_to_add.push(node);
-                            self.is_dragging = false;
+                    // Insert delay before this action if enabled
+                    if self.record_delays {
+                        if let Some(last_time) = self.last_event_time {
+                            let elapsed = last_time.elapsed().as_secs_f32();
+                            if elapsed > 0.05 {
+                                let delay_node = recorder::mapper::create_delay_node((0.0, 0.0), elapsed);
+                                nodes_to_add.push(delay_node);
+                            }
                         }
-                    } else {
-                        // Release without pending (started before recording)
-                        let node = recorder::mapper::create_mouse_btn_node(
-                            NodeType::MouseUp,
-                            (0.0, 0.0),
-                            btn_str,
-                            x,
-                            y,
-                        );
-                        nodes_to_add.push(node);
-                        self.is_dragging = false;
                     }
+                    self.last_event_time = Some(std::time::Instant::now());
+
+                    // Clear pending state
+                    self.pending_mouse_down = None;
+                    self.is_dragging = false;
+                    
+                    // Create MouseUp node with current position
+                    let node = recorder::mapper::create_mouse_btn_node(
+                        NodeType::MouseUp,
+                        (0.0, 0.0),
+                        btn_str,
+                        x,
+                        y,
+                    );
+                    nodes_to_add.push(node);
                 }
                 _ => {
-                    // KeyPress or MouseMove (if streamed)
-                    // Auto-insert Delay if needed
-                    if let Some(last_time) = self.last_event_time {
-                         let elapsed = last_time.elapsed().as_secs_f32();
-                         if elapsed > 0.05 { // Lowered to 50ms to catch faster sequences
-                             let delay_node = recorder::mapper::create_delay_node((0.0, 0.0), elapsed);
-                             nodes_to_add.push(delay_node);
-                         }
+                    // Prevent duplicate processing of Button events if they fall through
+                    if matches!(final_action.event.event_type, rdev::EventType::ButtonPress(_) | rdev::EventType::ButtonRelease(_)) {
+                        continue;
+                    }
+                
+                    // KeyPress or MouseMove
+                    // Insert delay before this action if enabled
+                    if self.record_delays {
+                        if let Some(last_time) = self.last_event_time {
+                            let elapsed = last_time.elapsed().as_secs_f32();
+                            if elapsed > 0.05 {
+                                let delay_node = recorder::mapper::create_delay_node((0.0, 0.0), elapsed);
+                                nodes_to_add.push(delay_node);
+                            }
+                        }
                     }
                     self.last_event_time = Some(std::time::Instant::now());
 
@@ -596,20 +753,32 @@ impl eframe::App for MyApp {
             }
 
             for mut node in nodes_to_add {
-                // Simple Placement: Place to the right of the rightmost node
-                let max_x = self
-                    .graph
-                    .nodes
-                    .values()
-                    .map(|n| n.position.0)
-                    .fold(100.0, f32::max);
+                // Layout Configuration
+                const NODES_PER_ROW: usize = 30;
+                const NODE_SPACING_X: f32 = 250.0;
+                const ROW_SPACING_Y: f32 = 250.0; // Space between rows
+                const START_X: f32 = 100.0; // Starting X coordinate for new rows
 
+                // Calculate current count in this session
+                let current_count = self.recorded_node_ids.len();
+                
+                // Determine layout
                 if let Some(prev_id) = self.last_recorded_node_id {
-                    // Follow chain vertically
-                    if let Some(prev_node) = self.graph.nodes.get(&prev_id) {
-                        node.position = (prev_node.position.0 + 250.0, prev_node.position.1);
+                    let prev_pos = self.graph.nodes.get(&prev_id).map(|n| n.position).unwrap_or((0.0, 0.0));
+                    
+                    if current_count > 0 && current_count % NODES_PER_ROW == 0 {
+                        // WRAP TO NEW LINE
+                        // Start a new row below the previous row's starting Y?
+                        // Actually, we want to go down from the PREVIOUS node's Y?
+                        // Let's use a simpler approach: 
+                        // If we are wrapping, we go back to START_X and move Y down.
+                        
+                        // We need to know the Y of the current row. 
+                        // Assuming nodes in a row have same Y.
+                        node.position = (START_X, prev_pos.1 + ROW_SPACING_Y);
                     } else {
-                        node.position = (max_x + 250.0, 100.0);
+                        // Continue on same row
+                        node.position = (prev_pos.0 + NODE_SPACING_X, prev_pos.1);
                     }
 
                     // Auto-Connect
@@ -620,23 +789,75 @@ impl eframe::App for MyApp {
                         to_port: "In".to_string(),
                     });
                 } else {
-                    // Start of new chain
-                    node.position = (max_x + 250.0, 100.0);
+                    // Start of new chain - Find rightmost point of existing graph or start fresh
+                    let max_x = self
+                        .graph
+                        .nodes
+                        .values()
+                        .map(|n| n.position.0)
+                        .fold(START_X, f32::max);
+                        
+                    let start_y = self
+                        .graph
+                        .nodes
+                        .values()
+                        .map(|n| n.position.1)
+                        .fold(100.0, f32::max); // Try to start below existing nodes if any? 
+                        // Or just stick to y=100 if we want to extend horizontally.
+                        // But user wants to avoid long lines.
+                    
+                    // Simple logic: Start at (max_x + spacing, 100)
+                    node.position = (max_x + NODE_SPACING_X, 100.0);
                 }
 
                 self.last_recorded_node_id = Some(node.id);
+                self.recorded_node_ids.push(node.id); // Track for auto-grouping
                 let name = format!("{:?}", node.node_type);
                 self.logs.push(format!("[Record] Captured: {}", name));
                 self.graph.nodes.insert(node.id, node);
             }
         }
 
-        // Drain logs from async threads
+        // Drain logs from async threads and detect execution completion
         if let Some(rx) = &self.log_receiver {
-            while let Ok(msg) = rx.try_recv() {
-                let now = Local::now();
-                let time_str = now.format("%H:%M:%S").to_string();
-                self.logs.push(format!("[{}] {}", time_str, msg));
+            let mut channel_closed = false;
+            loop {
+                match rx.try_recv() {
+                    Ok(event) => match event {
+                        ExecutionEvent::Log(msg) => {
+                            let now = Local::now();
+                            let time_str = now.format("%H:%M:%S").to_string();
+                            self.logs.push(format!("[{}] {}", time_str, msg));
+                        }
+                        ExecutionEvent::NodeActive(node_id) => {
+                            self.editor.node_execution_times.insert(node_id, std::time::Instant::now());
+                        }
+                        ExecutionEvent::NodeInactive(_) => {} // Optional future use
+                        ExecutionEvent::Finished => {
+                            // Can be used if we send explicit finish event
+                        }
+                    },
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        channel_closed = true;
+                        break;
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                }
+            }
+            if channel_closed {
+                // Execution thread has finished - clear log receiver and stop handle
+                self.log_receiver = None;
+                self.stop_handle = None;
+                // keep execution times for fade out
+                self.logs.push("[System] Execution Completed".to_string());
+            }
+
+            // Prune old execution times (keep for 1s for fade)
+            self.editor.node_execution_times.retain(|_, time| time.elapsed().as_secs_f32() < 1.0);
+            
+            // Request repaint for smooth fade animation
+            if !self.editor.node_execution_times.is_empty() {
+                ctx.request_repaint();
             }
         }
 
@@ -1008,8 +1229,11 @@ impl eframe::App for MyApp {
                                 NodeType::ForLoop => "For Loop".into(),
                                 NodeType::WhileLoop => "While Loop".into(),
                                 NodeType::Delay => "Delay".into(),
+                                NodeType::GetTimestamp => "Get Timestamp".into(),
                                 NodeType::Sequence => "Sequence".into(),
                                 NodeType::Gate => "Gate".into(),
+                                NodeType::WaitForCondition => "Wait For Condition".into(),
+                                NodeType::ForLoopAsync => "For Loop Async".into(),
                                 NodeType::Equals => "Equals".into(),
                                 NodeType::NotEquals => "Not Equals".into(),
                                 NodeType::GreaterThan => "Greater Than".into(),
@@ -1028,9 +1252,12 @@ impl eframe::App for MyApp {
                                 NodeType::Format => "Format".into(),
                                 NodeType::StringJoin => "String Join".into(),
                                 NodeType::StringBetween => "String Between".into(),
+                                NodeType::StringTrim => "String Trim".into(),
                                 NodeType::ReadInput => "Read Input".into(),
                                 NodeType::FileRead => "File Read".into(),
                                 NodeType::FileWrite => "File Write".into(),
+                                // Utility
+                                NodeType::Notes => "Notes".into(),
                                 // System Control
                                 NodeType::RunCommand => "Run Command".into(),
                                 NodeType::LaunchApp => "Launch App".into(),

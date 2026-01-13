@@ -27,6 +27,8 @@ pub enum NodeType {
     SetVariable {
         name: String,
     },
+    /// Comment/memo node - no execution, just for notes
+    Notes,
     // Math operations
     Add,
     Subtract,
@@ -67,6 +69,8 @@ pub enum NodeType {
     StringJoin,
     /// Extract content between two delimiter strings
     StringBetween,
+    /// Trim whitespace from string with mode options
+    StringTrim,
     // I/O
     ReadInput,
     FileRead,
@@ -82,6 +86,8 @@ pub enum NodeType {
     ToString,
     // Timing
     Delay,
+    /// Get current Unix timestamp
+    GetTimestamp,
     // System Control
     RunCommand,
     LaunchApp,
@@ -159,6 +165,11 @@ pub enum NodeType {
     ExtractAfter,
     /// Extract content from keyword until delimiter
     ExtractUntil,
+    // Advanced Control Flow
+    /// Blocks execution until a condition becomes true
+    WaitForCondition,
+    /// For loop that waits for Continue signal before each iteration
+    ForLoopAsync,
 }
 
 impl Default for NodeType {

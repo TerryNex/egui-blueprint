@@ -77,6 +77,11 @@ pub fn get_ports_for_type(node_type: &NodeType) -> (Vec<Port>, Vec<Port>) {
                     default_value: VariableValue::None,
                 }],
             ),
+            // Notes - Comment node for adding memos (no ports, just display text)
+            NodeType::Notes => (
+                vec![], // No inputs - text is stored in display_name
+                vec![], // No outputs
+            ),
             NodeType::Add => (
                 vec![
                     Port {
@@ -355,6 +360,21 @@ pub fn get_ports_for_type(node_type: &NodeType) -> (Vec<Port>, Vec<Port>) {
                     name: "Next".into(),
                     data_type: DataType::ExecutionFlow,
                     default_value: VariableValue::None,
+                }],
+            ),
+            // GetTimestamp - Get current Unix timestamp
+            NodeType::GetTimestamp => (
+                vec![
+                    Port {
+                        name: "Milliseconds".into(),
+                        data_type: DataType::Boolean,
+                        default_value: VariableValue::Boolean(true), // Default: 13-digit milliseconds
+                    },
+                ],
+                vec![Port {
+                    name: "Timestamp".into(),
+                    data_type: DataType::Integer,
+                    default_value: VariableValue::Integer(0),
                 }],
             ),
             // Modulo (%)
@@ -720,6 +740,27 @@ pub fn get_ports_for_type(node_type: &NodeType) -> (Vec<Port>, Vec<Port>) {
                         name: "After".into(),
                         data_type: DataType::String,
                         default_value: VariableValue::String("".into()),
+                    },
+                ],
+                vec![Port {
+                    name: "Out".into(),
+                    data_type: DataType::String,
+                    default_value: VariableValue::String("".into()),
+                }],
+            ),
+            // StringTrim - Trim whitespace from string with mode options
+            // Mode: 0 = Both (default), 1 = Start only, 2 = End only, 3 = All (including internal)
+            NodeType::StringTrim => (
+                vec![
+                    Port {
+                        name: "String".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("  hello world  ".into()),
+                    },
+                    Port {
+                        name: "Mode".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0), // 0=Both, 1=Start, 2=End, 3=All
                     },
                 ],
                 vec![Port {
@@ -1274,7 +1315,7 @@ pub fn get_ports_for_type(node_type: &NodeType) -> (Vec<Port>, Vec<Port>) {
                     Port {
                         name: "Text".into(),
                         data_type: DataType::String,
-                        default_value: VariableValue::String("012 012".into()),
+                        default_value: VariableValue::String("".into()),
                     },
                     Port {
                         name: "Delay".into(),
@@ -2056,6 +2097,87 @@ pub fn get_ports_for_type(node_type: &NodeType) -> (Vec<Port>, Vec<Port>) {
                         name: "Found".into(),
                         data_type: DataType::Boolean,
                         default_value: VariableValue::Boolean(false),
+                    },
+                ],
+            ),
+
+            // WaitForCondition - Blocks until condition becomes true
+            NodeType::WaitForCondition => (
+                vec![
+                    Port {
+                        name: "In".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Condition".into(),
+                        data_type: DataType::Boolean,
+                        default_value: VariableValue::Boolean(false),
+                    },
+                    Port {
+                        name: "Poll Interval (ms)".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(100),
+                    },
+                    Port {
+                        name: "Timeout (ms)".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0), // 0 = no timeout
+                    },
+                ],
+                vec![
+                    Port {
+                        name: "Next".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Timed Out".into(),
+                        data_type: DataType::Boolean,
+                        default_value: VariableValue::Boolean(false),
+                    },
+                ],
+            ),
+
+            // ForLoopAsync - For loop that waits for Continue signal before each iteration
+            NodeType::ForLoopAsync => (
+                vec![
+                    Port {
+                        name: "In".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Start".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "End".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(10),
+                    },
+                    Port {
+                        name: "Continue".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                ],
+                vec![
+                    Port {
+                        name: "Loop".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Index".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "Done".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
                     },
                 ],
             ),

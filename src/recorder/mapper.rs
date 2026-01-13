@@ -94,6 +94,10 @@ pub fn create_click_node(node_type: NodeType, position: (f32, f32), x: i64, y: i
         outputs,
         z_order: 0,
         display_name: None,
+        enabled: true,
+        group_id: None,
+        note_text: String::new(),
+        note_size: (200.0, 100.0),
     }
 }
 
@@ -125,10 +129,17 @@ fn create_key_node(node_type: NodeType, position: (f32, f32), key: String) -> No
         outputs,
         z_order: 0,
         display_name: None,
+        enabled: true,
+        group_id: None,
+        note_text: String::new(),
+        note_size: (200.0, 100.0),
     }
 }
 
-pub fn create_delay_node(position: (f32, f32), duration: f32) -> Node {
+pub fn create_delay_node(position: (f32, f32), duration_secs: f32) -> Node {
+    // Convert seconds to milliseconds
+    let duration_ms = (duration_secs * 1000.0) as i64;
+    
     let inputs = vec![
         Port {
             name: "In".to_string(),
@@ -136,9 +147,9 @@ pub fn create_delay_node(position: (f32, f32), duration: f32) -> Node {
             default_value: VariableValue::None,
         },
         Port {
-            name: "Duration".to_string(),
-            data_type: DataType::Float,
-            default_value: VariableValue::Float(duration as f64),
+            name: "Duration (ms)".to_string(),
+            data_type: DataType::Integer,
+            default_value: VariableValue::Integer(duration_ms),
         },
     ];
 
@@ -156,6 +167,10 @@ pub fn create_delay_node(position: (f32, f32), duration: f32) -> Node {
         outputs,
         z_order: 0,
         display_name: None,
+        enabled: true,
+        group_id: None,
+        note_text: String::new(),
+        note_size: (200.0, 100.0),
     }
 }
 
@@ -203,6 +218,10 @@ pub fn create_mouse_btn_node(
         outputs,
         z_order: 0,
         display_name: None,
+        enabled: true,
+        group_id: None,
+        note_text: String::new(),
+        note_size: (200.0, 100.0),
     }
 }
 
@@ -239,5 +258,9 @@ pub fn create_mouse_move_node(position: (f32, f32), x: i64, y: i64) -> Node {
         outputs,
         z_order: 0,
         display_name: None,
+        enabled: true,
+        group_id: None,
+        note_text: String::new(),
+        note_size: (200.0, 100.0),
     }
 }

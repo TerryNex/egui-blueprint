@@ -45,6 +45,8 @@ pub struct GraphEditor {
     /// Group ID currently being edited for name (double-click on header)
     pub editing_group_name: Option<Uuid>,
     pub recorder: crate::recorder::Recorder,
+    /// Map of node ID to the time it was last executed (for fade-out effect)
+    pub node_execution_times: std::collections::HashMap<Uuid, std::time::Instant>,
 }
 
 impl Default for GraphEditor {
@@ -67,6 +69,7 @@ impl Default for GraphEditor {
             hovered_port: None,
             editing_group_name: None,
             recorder: crate::recorder::Recorder::new(),
+            node_execution_times: std::collections::HashMap::new(),
         }
     }
 }
@@ -836,10 +839,13 @@ impl GraphEditor {
                                 // Control Flow
                                 ("Branch", crate::node_types::NodeType::Branch),
                                 ("For Loop", crate::node_types::NodeType::ForLoop),
+                                ("For Loop Async", crate::node_types::NodeType::ForLoopAsync),
                                 ("While Loop", crate::node_types::NodeType::WhileLoop),
                                 ("Delay", crate::node_types::NodeType::Delay),
+                                ("Get Timestamp", crate::node_types::NodeType::GetTimestamp),
                                 ("Sequence", crate::node_types::NodeType::Sequence),
                                 ("Gate", crate::node_types::NodeType::Gate),
+                                ("Wait For Condition", crate::node_types::NodeType::WaitForCondition),
                                 // Math
                                 ("Add", crate::node_types::NodeType::Add),
                                 ("Subtract", crate::node_types::NodeType::Subtract),
@@ -880,6 +886,7 @@ impl GraphEditor {
                                 ("Format", crate::node_types::NodeType::Format),
                                 ("String Join", crate::node_types::NodeType::StringJoin),
                                 ("String Between", crate::node_types::NodeType::StringBetween),
+                                ("String Trim", crate::node_types::NodeType::StringTrim),
                                 // Conversions
                                 ("To Integer", crate::node_types::NodeType::ToInteger),
                                 ("To Float", crate::node_types::NodeType::ToFloat),
@@ -901,6 +908,8 @@ impl GraphEditor {
                                         name: "MyVar".into(),
                                     },
                                 ),
+                                // Utility
+                                // ("Notes", crate::node_types::NodeType::Notes), // Removed due to bugs
                                 // System Control
                                 ("Run Command", crate::node_types::NodeType::RunCommand),
                                 ("Launch App", crate::node_types::NodeType::LaunchApp),
@@ -1028,6 +1037,10 @@ impl GraphEditor {
                                             outputs,
                                             z_order,
                                             display_name: None,
+                                            enabled: true,
+                                            group_id: None,
+                                            note_text: String::new(),
+                                            note_size: (200.0, 100.0),
                                         },
                                     );
                                     self.node_finder = None;
@@ -1378,6 +1391,13 @@ impl GraphEditor {
         let mut pressed_any_port = false;
         let mut content_changed = false;
 
+        // ===== SPECIAL HANDLING FOR NOTES NODE =====
+        // REMOVED at user request due to stability issues (global selection/drift).
+        // if matches!(node.node_type, crate::node_types::NodeType::Notes) { ... }
+        // ===========================================
+
+        // ===== END NOTES NODE HANDLING =====
+
         // Format title as "Type: CustomName" if display_name is set, otherwise just "Type"
         let type_name = match &node.node_type {
             crate::node_types::NodeType::BlueprintFunction { name } => name.clone(),
@@ -1516,8 +1536,40 @@ impl GraphEditor {
             );
         }
 
+        // Visual Feedback for Execution (Fade-Out)
+        let mut active_alpha = 0.0;
+        if let Some(time) = self.node_execution_times.get(&node.id) {
+             let elapsed = time.elapsed().as_secs_f32();
+             let fade_duration = 0.5; // 0.5s tail
+             if elapsed < fade_duration {
+                 active_alpha = (1.0 - elapsed / fade_duration).powf(2.0); // Simple quadratic fade
+             }
+        }
+        
+        // Background
+        let bg_color = if active_alpha > 0.0 {
+            let base_col = Color32::from_rgb(50, 150, 50); // Brighter green start
+            let r = crate::editor::utils::lerp(64.0, base_col.r() as f32, active_alpha) as u8;
+            let g = crate::editor::utils::lerp(64.0, base_col.g() as f32, active_alpha) as u8;
+            let b = crate::editor::utils::lerp(64.0, base_col.b() as f32, active_alpha) as u8;
+            Color32::from_rgb(r, g, b)
+        } else {
+            Color32::from_gray(64)
+        };
+        
         ui.painter()
-            .rect_filled(node_rect, 5.0, Color32::from_gray(64));
+            .rect_filled(node_rect, 5.0, bg_color);
+
+        if active_alpha > 0.0 {
+            // Add a glowing border effect
+             let alpha_u8 = (255.0 * active_alpha) as u8;
+             ui.painter().rect_stroke(
+                node_rect.expand(2.0),
+                5.0,
+                Stroke::new(3.0, Color32::GREEN.gamma_multiply(active_alpha)),
+                egui::StrokeKind::Middle,
+            );
+        }
         ui.painter().rect_stroke(
             node_rect,
             5.0,
@@ -1673,6 +1725,40 @@ impl GraphEditor {
         }
 
         ui.painter().rect_filled(header_rect, 5.0, *header_color);
+        
+        // Show enable/disable checkbox for Event Tick nodes
+        if matches!(&node.node_type, crate::node_types::NodeType::BlueprintFunction { name } if name == "Event Tick") {
+            let checkbox_size = 14.0 * self.zoom;
+            let checkbox_pos = header_rect.left_top() + Vec2::new(4.0 * self.zoom, (header_rect.height() - checkbox_size) / 2.0);
+            let checkbox_rect = Rect::from_min_size(checkbox_pos, Vec2::splat(checkbox_size));
+            
+            let checkbox_response = ui.allocate_rect(checkbox_rect, Sense::click());
+            
+            // Draw checkbox background
+            let bg_color = if node.enabled { Color32::from_rgb(50, 180, 50) } else { Color32::from_rgb(100, 100, 100) };
+            ui.painter().rect_filled(checkbox_rect, 2.0, bg_color);
+            
+            // Draw checkmark if enabled
+            if node.enabled {
+                let stroke = Stroke::new(2.0 * self.zoom, Color32::WHITE);
+                let check_points = [
+                    checkbox_rect.left_top() + Vec2::new(checkbox_size * 0.2, checkbox_size * 0.5),
+                    checkbox_rect.left_top() + Vec2::new(checkbox_size * 0.4, checkbox_size * 0.75),
+                    checkbox_rect.left_top() + Vec2::new(checkbox_size * 0.85, checkbox_size * 0.2),
+                ];
+                ui.painter().line_segment([check_points[0], check_points[1]], stroke);
+                ui.painter().line_segment([check_points[1], check_points[2]], stroke);
+            }
+            
+            // Handle click to toggle
+            if checkbox_response.clicked() {
+                node.enabled = !node.enabled;
+                content_changed = true;
+            }
+            
+            // Tooltip
+            checkbox_response.on_hover_text(if node.enabled { "Enabled - Click to disable" } else { "Disabled - Click to enable" });
+        }
 
         // Show text edit if this node is being edited, otherwise show title
         // Cancel editing if node is no longer selected

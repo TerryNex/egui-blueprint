@@ -1,6 +1,7 @@
 use crate::graph::{BlueprintGraph, Connection, Node, Port, VariableValue};
 use crate::node_types::NodeType;
 use crate::executor::Interpreter;
+use crate::executor::events::ExecutionEvent;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -17,6 +18,10 @@ fn create_node(id: Uuid, node_type: NodeType) -> Node {
         outputs: Vec::new(),
         z_order: 0,
         display_name: None,
+        enabled: true,
+        group_id: None,
+        note_text: String::new(),
+        note_size: (200.0, 100.0),
     }
 }
 
@@ -127,8 +132,10 @@ pub fn run_drag_test() {
     );
     
     // Print logs
-    while let Ok(msg) = rx_log.try_recv() {
-        println!("LOG: {}", msg);
+    while let Ok(event) = rx_log.try_recv() {
+         if let ExecutionEvent::Log(msg) = event {
+            println!("LOG: {}", msg);
+         }
     }
 
     thread::sleep(Duration::from_millis(1000));

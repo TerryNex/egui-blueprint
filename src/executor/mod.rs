@@ -23,6 +23,7 @@ pub mod image_recognition;
 pub mod json_helpers;
 pub mod node_eval;
 pub mod type_conversions;
+pub mod events;
 
 use crate::graph::{BlueprintGraph, Node, VariableValue};
 use crate::node_types::NodeType;
@@ -30,6 +31,7 @@ use enigo::{Button, Coordinate, Direction, Enigo, Key, Keyboard, Mouse, Settings
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender, channel};
+use crate::executor::events::ExecutionEvent;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -66,13 +68,13 @@ impl ExecutionContext {
 pub struct Interpreter;
 
 impl Interpreter {
-    pub fn run_async(graph: &BlueprintGraph) -> Receiver<String> {
+    pub fn run_async(graph: &BlueprintGraph) -> Receiver<ExecutionEvent> {
         let (tx, rx) = channel();
 
         // Initial log
         let tx_main = tx.clone();
         tx_main
-            .send("Interpreter started (Async).".to_string())
+            .send(ExecutionEvent::Log("Interpreter started (Async).".to_string()))
             .unwrap_or_default();
 
         // Clone graph and create shared context
@@ -88,11 +90,11 @@ impl Interpreter {
             }
         }
 
-        // Find all Event Tick nodes
+        // Find all enabled Event Tick nodes
         let mut start_nodes = Vec::new();
         for node in graph.nodes.values() {
             if let NodeType::BlueprintFunction { name } = &node.node_type {
-                if name == "Event Tick" {
+                if name == "Event Tick" && node.enabled {
                     start_nodes.push(node.id);
                 }
             }
@@ -100,7 +102,7 @@ impl Interpreter {
 
         if start_nodes.is_empty() {
             tx_main
-                .send("No 'Event Tick' node found. Execution aborted.".to_string())
+                .send(ExecutionEvent::Log("No 'Event Tick' node found. Execution aborted.".to_string()))
                 .unwrap_or_default();
             // We return rx, connection closes, main thread detects it? No, rx stays open but sender dropped?
             // Actually tx_main is dropped here. If threads spawn, they hold tx clones.
@@ -124,12 +126,12 @@ impl Interpreter {
     /// Run graph asynchronously with a stop handle for UI control.
     /// Returns tuple of (log_receiver, stop_handle).
     /// Call `stop_handle.store(true, Ordering::Relaxed)` to request stop.
-    pub fn run_async_with_stop(graph: &BlueprintGraph) -> (Receiver<String>, Arc<AtomicBool>) {
+    pub fn run_async_with_stop(graph: &BlueprintGraph) -> (Receiver<ExecutionEvent>, Arc<AtomicBool>) {
         let (tx, rx) = channel();
 
         let tx_main = tx.clone();
         tx_main
-            .send("Interpreter started (Async).".to_string())
+            .send(ExecutionEvent::Log("Interpreter started (Async).".to_string()))
             .unwrap_or_default();
 
         let graph = Arc::new(graph.clone());
@@ -150,11 +152,11 @@ impl Interpreter {
             }
         }
 
-        // Find all Event Tick nodes
+        // Find all enabled Event Tick nodes
         let mut start_nodes = Vec::new();
         for node in graph.nodes.values() {
             if let NodeType::BlueprintFunction { name } = &node.node_type {
-                if name == "Event Tick" {
+                if name == "Event Tick" && node.enabled {
                     start_nodes.push(node.id);
                 }
             }
@@ -162,7 +164,7 @@ impl Interpreter {
 
         if start_nodes.is_empty() {
             tx_main
-                .send("No 'Event Tick' node found. Execution aborted.".to_string())
+                .send(ExecutionEvent::Log("No 'Event Tick' node found. Execution aborted.".to_string()))
                 .unwrap_or_default();
             return (rx, stop_handle);
         }
@@ -184,10 +186,10 @@ impl Interpreter {
         graph: Arc<BlueprintGraph>,
         start_id: Uuid,
         context: Arc<Mutex<ExecutionContext>>,
-        tx: Sender<String>,
+        tx: Sender<ExecutionEvent>,
     ) {
         let logger = |msg: String| {
-            let _ = tx.send(msg);
+            let _ = tx.send(ExecutionEvent::Log(msg));
         };
 
         let mut current_node_id = start_id;
@@ -207,10 +209,22 @@ impl Interpreter {
         }
 
         while steps < max_steps {
+            // Check if stop was requested
+            {
+                let ctx = context.lock().unwrap();
+                if ctx.should_stop() {
+                    logger("Execution stopped by user request.".to_string());
+                    break;
+                }
+            }
+
             let node = match graph.nodes.get(&current_node_id) {
                 Some(n) => n,
                 None => break,
             };
+
+            // Notify UI that node is active
+            let _ = tx.send(ExecutionEvent::NodeActive(current_node_id));
 
             match &node.node_type {
                 NodeType::SetVariable { name } => {
@@ -302,6 +316,16 @@ impl Interpreter {
 
                     // Execute Loop body for each iteration
                     for i in start..end {
+                        // Check if stop was requested
+                        {
+                            let ctx = context.lock().unwrap();
+                            if ctx.should_stop() {
+                                logger("ForLoop: Stop requested by user".to_string());
+                                break;
+                            }
+                        }
+
+
                         // Set Index output (we need to store it for GetVariable to access)
                         {
                             let mut ctx = context.lock().unwrap();
@@ -312,13 +336,12 @@ impl Interpreter {
                         // Execute the Loop body
                         if let Some(loop_body) = Self::follow_flow(&graph, current_node_id, "Loop")
                         {
-                            Self::execute_flow_from(
+                            Self::execute_subgraph(
                                 graph.clone(),
                                 loop_body,
                                 context.clone(),
                                 tx.clone(),
-                                steps,
-                                max_steps,
+                                None,
                             );
                         }
                     }
@@ -357,13 +380,12 @@ impl Interpreter {
                         // Execute the Loop body
                         if let Some(loop_body) = Self::follow_flow(&graph, current_node_id, "Loop")
                         {
-                            Self::execute_flow_from(
+                            Self::execute_subgraph(
                                 graph.clone(),
                                 loop_body,
                                 context.clone(),
                                 tx.clone(),
-                                steps,
-                                max_steps,
+                                None,
                             );
                         }
                         iteration += 1;
@@ -386,13 +408,12 @@ impl Interpreter {
                     for i in 0..3 {
                         let port_name = format!("Then {}", i);
                         if let Some(next) = Self::follow_flow(&graph, current_node_id, &port_name) {
-                            Self::execute_flow_from(
+                            Self::execute_subgraph(
                                 graph.clone(),
                                 next,
                                 context.clone(),
                                 tx.clone(),
-                                steps,
-                                max_steps,
+                                None,
                             );
                         }
                     }
@@ -411,6 +432,147 @@ impl Interpreter {
                         }
                     } else {
                         // Gate is closed, stop execution
+                        break;
+                    }
+                }
+                NodeType::WaitForCondition => {
+                    let poll_interval = match Self::evaluate_input(&graph, current_node_id, "Poll Interval (ms)", &context) {
+                        Ok(VariableValue::Integer(ms)) => ms as u64,
+                        Ok(VariableValue::Float(ms)) => ms as u64,
+                        _ => 100,
+                    };
+                    let timeout_ms = match Self::evaluate_input(&graph, current_node_id, "Timeout (ms)", &context) {
+                        Ok(VariableValue::Integer(ms)) => ms as u64,
+                        Ok(VariableValue::Float(ms)) => ms as u64,
+                        _ => 0,
+                    };
+                    
+                    let start_time = std::time::Instant::now();
+                    let mut timed_out = false;
+                    
+                    logger("WaitForCondition: Waiting for condition...".to_string());
+                    
+                    loop {
+                        // Check stop requested
+                        {
+                            let ctx = context.lock().unwrap();
+                            if ctx.should_stop() {
+                                logger("WaitForCondition: Stop requested by user".to_string());
+                                break;
+                            }
+                        }
+                        
+                        // Check condition
+                        let condition = Self::evaluate_input(&graph, current_node_id, "Condition", &context)
+                            .unwrap_or(VariableValue::Boolean(false));
+                        if Self::to_bool(&condition) {
+                            logger("WaitForCondition: Condition met!".to_string());
+                            break;
+                        }
+                        
+                        // Check timeout (0 = no timeout)
+                        if timeout_ms > 0 && start_time.elapsed().as_millis() as u64 > timeout_ms {
+                            timed_out = true;
+                            logger(format!("WaitForCondition: Timed out after {}ms", timeout_ms));
+                            break;
+                        }
+                        
+                        thread::sleep(Duration::from_millis(poll_interval));
+                    }
+                    
+                    // Store timed_out result for output port
+                    {
+                        let mut ctx = context.lock().unwrap();
+                        let node_id_str = current_node_id.to_string();
+                        ctx.variables.insert(
+                            format!("__out_{}_Timed Out", node_id_str),
+                            VariableValue::Boolean(timed_out),
+                        );
+                    }
+                    
+                    if let Some(next) = Self::follow_flow(&graph, current_node_id, "Next") {
+                        current_node_id = next;
+                    } else {
+                        break;
+                    }
+                }
+                NodeType::ForLoopAsync => {
+                    let start = match Self::evaluate_input(&graph, current_node_id, "Start", &context) {
+                        Ok(VariableValue::Integer(i)) => i,
+                        _ => 0,
+                    };
+                    let end = match Self::evaluate_input(&graph, current_node_id, "End", &context) {
+                        Ok(VariableValue::Integer(i)) => i,
+                        _ => 10,
+                    };
+                    
+                    let node_id_str = current_node_id.to_string();
+                    
+                    for i in start..end {
+                        // Check stop requested
+                        {
+                            let ctx = context.lock().unwrap();
+                            if ctx.should_stop() {
+                                logger("ForLoopAsync: Stop requested by user".to_string());
+                                break;
+                            }
+                        }
+                        
+                        // Set Index output
+                        {
+                            let mut ctx = context.lock().unwrap();
+                            ctx.variables.insert("__loop_index".into(), VariableValue::Integer(i));
+                            ctx.variables.insert(
+                                format!("__out_{}_Index", node_id_str),
+                                VariableValue::Integer(i),
+                            );
+                            // Clear continue signal for this iteration
+                            ctx.variables.remove(&format!("__continue_signal_{}", node_id_str));
+                        }
+                        
+                        logger(format!("ForLoopAsync: Starting iteration {} of {}", i, end - 1));
+                        
+                        // Execute the Loop body using full execution (supports ALL node types)
+                        if let Some(loop_body) = Self::follow_flow(&graph, current_node_id, "Loop") {
+                            // Use execute_subgraph which runs the full node execution logic
+                            Self::execute_subgraph(
+                                graph.clone(),
+                                loop_body,
+                                context.clone(),
+                                tx.clone(),
+                                Some(current_node_id), // parent_loop_id for Continue signal handling
+                            );
+                        }
+                        
+                        // Wait for Continue signal
+                        logger(format!("ForLoopAsync: Waiting for Continue signal (iteration {})", i));
+                        loop {
+                            // Check stop requested
+                            {
+                                let ctx = context.lock().unwrap();
+                                if ctx.should_stop() {
+                                    logger("ForLoopAsync: Stop requested during wait".to_string());
+                                    break;
+                                }
+                            }
+                            
+                            // Check if Continue signal was set
+                            {
+                                let ctx = context.lock().unwrap();
+                                if let Some(VariableValue::Boolean(true)) = ctx.variables.get(&format!("__continue_signal_{}", node_id_str)) {
+                                    logger(format!("ForLoopAsync: Continue signal received (iteration {})", i));
+                                    break;
+                                }
+                            }
+                            
+                            thread::sleep(Duration::from_millis(50));
+                        }
+                    }
+                    
+                    // Continue to Done
+                    if let Some(next) = Self::follow_flow(&graph, current_node_id, "Done") {
+                        current_node_id = next;
+                    } else {
                         break;
                     }
                 }
@@ -1003,31 +1165,20 @@ impl Interpreter {
 
                     if let Some(enigo) = &mut enigo {
                         for c in text.chars() {
-                            // Handle special characters that need key conversion
-                            let key_pressed = match c {
-                                ' ' => {
-                                    let _ = enigo.key(Key::Space, Direction::Click);
-                                    true
+                            // Use enigo.text() for each character - more reliable than Key::Unicode on macOS
+                            let char_str = c.to_string();
+                            match enigo.text(&char_str) {
+                                Ok(_) => {}
+                                Err(e) => {
+                                    logger(format!("TypeString: Error typing '{}': {:?}", c, e));
                                 }
-                                '\n' => {
-                                    let _ = enigo.key(Key::Return, Direction::Click);
-                                    true
-                                }
-                                '\t' => {
-                                    let _ = enigo.key(Key::Tab, Direction::Click);
-                                    true
-                                }
-                                _ => {
-                                    // For regular characters, use Unicode key press
-                                    let _ = enigo.key(Key::Unicode(c), Direction::Click);
-                                    true
-                                }
-                            };
+                            }
                             
-                            if key_pressed && delay_ms > 0 {
+                            if delay_ms > 0 {
                                 thread::sleep(Duration::from_millis(delay_ms));
                             }
                         }
+                        logger(format!("TypeString: Completed typing {} characters", text.len()));
                     } else {
                         logger("TypeString Error: Enigo not initialized".into());
                     }
@@ -2225,18 +2376,288 @@ impl Interpreter {
         }
         None
     }
+    
+    /// Follow flow connection, but check if target is a ForLoopAsync Continue port.
+    /// If it is, set the continue signal and return None (flow terminates here).
+    fn follow_flow_with_continue(
+        graph: &BlueprintGraph,
+        node_id: Uuid,
+        port_name: &str,
+        context: &Arc<Mutex<ExecutionContext>>,
+    ) -> Option<Uuid> {
+        for conn in &graph.connections {
+            if conn.from_node == node_id && conn.from_port == port_name {
+                // Check if target is a ForLoopAsync Continue port
+                if conn.to_port == "Continue" {
+                    if let Some(target_node) = graph.nodes.get(&conn.to_node) {
+                        if matches!(target_node.node_type, NodeType::ForLoopAsync) {
+                            // Set continue signal for this ForLoopAsync
+                            let mut ctx = context.lock().unwrap();
+                            ctx.variables.insert(
+                                format!("__continue_signal_{}", conn.to_node),
+                                VariableValue::Boolean(true),
+                            );
+                            // Signal set, this branch terminates
+                            return None;
+                        }
+                    }
+                }
+                return Some(conn.to_node);
+            }
+        }
+        None
+    }
 
-    /// Helper for executing nested flows (like loop bodies)
+    /// Execute a subgraph starting from the given node.
+    /// This is used for loop bodies and supports ALL node types.
+    /// parent_loop_id: If set, when flow reaches a Continue port connected to this loop, 
+    /// it will set the continue signal and return.
+    fn execute_subgraph(
+        graph: Arc<BlueprintGraph>,
+        start_id: Uuid,
+        context: Arc<Mutex<ExecutionContext>>,
+        tx: Sender<ExecutionEvent>,
+        parent_loop_id: Option<Uuid>,
+    ) {
+        let logger = |msg: String| {
+            let _ = tx.send(ExecutionEvent::Log(msg));
+        };
+        
+        let mut current_node_id = start_id;
+        let max_steps = 10000;
+        let mut steps = 0;
+        
+        loop {
+            if steps >= max_steps {
+                logger("Max steps reached in subgraph".to_string());
+                break;
+            }
+            steps += 1;
+            
+            // Check stop requested
+            {
+                let ctx = context.lock().unwrap();
+                if ctx.should_stop() {
+                    break;
+                }
+            }
+            
+            let node = match graph.nodes.get(&current_node_id) {
+                Some(n) => n.clone(),
+                None => break,
+            };
+            
+            // Notify UI that node is active
+            let _ = tx.send(ExecutionEvent::NodeActive(current_node_id));
+            
+            // Check if this node's Next output connects to a Continue port of parent loop
+            if let Some(parent_id) = parent_loop_id {
+                for conn in &graph.connections {
+                    if conn.from_node == current_node_id && conn.from_port == "Next" {
+                        if conn.to_node == parent_id && conn.to_port == "Continue" {
+                            // We're about to connect to the Continue port - set signal and exit subgraph
+                            {
+                                let mut ctx = context.lock().unwrap();
+                                ctx.variables.insert(
+                                    format!("__continue_signal_{}", parent_id.to_string()),
+                                    VariableValue::Boolean(true),
+                                );
+                            }
+                            return; // Exit subgraph, Continue signal is set
+                        }
+                    }
+                }
+            }
+            
+            // Execute node based on type - simplified common cases
+            match &node.node_type {
+                NodeType::BlueprintFunction { name } if name == "Print String" => {
+                    if let Ok(val) = Self::evaluate_input(&graph, current_node_id, "String", &context) {
+                        let output = match val {
+                            VariableValue::String(s) => s,
+                            other => format!("{:?}", other),
+                        };
+                        logger(format!("PRINT: {}", output));
+                    }
+                }
+                NodeType::Delay => {
+                    let ms = match Self::evaluate_input(&graph, current_node_id, "Duration (ms)", &context) {
+                        Ok(VariableValue::Integer(ms)) => ms as u64,
+                        Ok(VariableValue::Float(f)) => f as u64,
+                        _ => 100,
+                    };
+                    thread::sleep(Duration::from_millis(ms));
+                }
+                NodeType::SetVariable { name } => {
+                    if let Ok(val) = Self::evaluate_input(&graph, current_node_id, "Value", &context) {
+                        context.lock().unwrap().variables.insert(name.clone(), val);
+                    }
+                }
+                NodeType::Click => {
+                    if let Ok(enigo) = Enigo::new(&Settings::default()) {
+                        let mut enigo = enigo;
+                        let x = match Self::evaluate_input(&graph, current_node_id, "X", &context) {
+                            Ok(VariableValue::Integer(i)) => i as i32,
+                            _ => 0,
+                        };
+                        let y = match Self::evaluate_input(&graph, current_node_id, "Y", &context) {
+                            Ok(VariableValue::Integer(i)) => i as i32,
+                            _ => 0,
+                        };
+                        let _ = enigo.move_mouse(x, y, Coordinate::Abs);
+                        let _ = enigo.button(Button::Left, Direction::Click);
+                        logger(format!("Subgraph: Click at ({}, {})", x, y));
+                    }
+                }
+                NodeType::MouseMove => {
+                    if let Ok(enigo) = Enigo::new(&Settings::default()) {
+                        let mut enigo = enigo;
+                        let x = match Self::evaluate_input(&graph, current_node_id, "X", &context) {
+                            Ok(VariableValue::Integer(i)) => i as i32,
+                            _ => 0,
+                        };
+                        let y = match Self::evaluate_input(&graph, current_node_id, "Y", &context) {
+                            Ok(VariableValue::Integer(i)) => i as i32,
+                            _ => 0,
+                        };
+                        let _ = enigo.move_mouse(x, y, Coordinate::Abs);
+                    }
+                }
+                NodeType::MouseDown => {
+                    if let Ok(enigo) = Enigo::new(&Settings::default()) {
+                        let mut enigo = enigo;
+                        let x = match Self::evaluate_input(&graph, current_node_id, "X", &context) {
+                            Ok(VariableValue::Integer(i)) => i as i32,
+                            _ => 0,
+                        };
+                        let y = match Self::evaluate_input(&graph, current_node_id, "Y", &context) {
+                            Ok(VariableValue::Integer(i)) => i as i32,
+                            _ => 0,
+                        };
+                        let _ = enigo.move_mouse(x, y, Coordinate::Abs);
+                        let _ = enigo.button(Button::Left, Direction::Press);
+                    }
+                }
+                NodeType::MouseUp => {
+                    if let Ok(enigo) = Enigo::new(&Settings::default()) {
+                        let mut enigo = enigo;
+                        let x = match Self::evaluate_input(&graph, current_node_id, "X", &context) {
+                            Ok(VariableValue::Integer(i)) => i as i32,
+                            _ => 0,
+                        };
+                        let y = match Self::evaluate_input(&graph, current_node_id, "Y", &context) {
+                            Ok(VariableValue::Integer(i)) => i as i32,
+                            _ => 0,
+                        };
+                        let _ = enigo.move_mouse(x, y, Coordinate::Abs);
+                        let _ = enigo.button(Button::Left, Direction::Release);
+                    }
+                }
+                NodeType::KeyPress => {
+                    let key_str = match Self::evaluate_input(&graph, current_node_id, "Key", &context) {
+                        Ok(VariableValue::String(s)) => s,
+                        _ => "a".to_string(),
+                    };
+                    if let Ok(enigo) = Enigo::new(&Settings::default()) {
+                        let mut enigo = enigo;
+                        if key_str.len() == 1 {
+                            if let Some(c) = key_str.chars().next() {
+                                let _ = enigo.key(Key::Unicode(c), Direction::Click);
+                            }
+                        }
+                    }
+                }
+                NodeType::Scroll => {
+                    if let Ok(enigo) = Enigo::new(&Settings::default()) {
+                        let mut enigo = enigo;
+                        let x = match Self::evaluate_input(&graph, current_node_id, "X", &context) {
+                            Ok(VariableValue::Integer(i)) => i as i32,
+                            _ => 0,
+                        };
+                        let y = match Self::evaluate_input(&graph, current_node_id, "Y", &context) {
+                            Ok(VariableValue::Integer(i)) => i as i32,
+                            _ => -3,
+                        };
+                        let _ = enigo.scroll(x, enigo::Axis::Horizontal);
+                        let _ = enigo.scroll(y, enigo::Axis::Vertical);
+                    }
+                }
+                NodeType::TypeString | NodeType::TypeText => { // Support both for backward compatibility
+                     let text = match Self::evaluate_input(&graph, current_node_id, "Text", &context) {
+                        Ok(VariableValue::String(s)) => s,
+                        _ => String::new(),
+                    };
+                    
+                    let interval = if matches!(node.node_type, NodeType::TypeString) {
+                        match Self::evaluate_input(&graph, current_node_id, "Interval (ms)", &context) {
+                             Ok(VariableValue::Integer(i)) => i as u64,
+                             _ => 50,
+                        }
+                    } else {
+                        0 // TypeText usually implies instant/fast typing
+                    };
+
+                    if let Ok(enigo) = Enigo::new(&Settings::default()) {
+                        let mut enigo = enigo;
+                        if interval > 0 {
+                            for c in text.chars() {
+                                let _ = enigo.text(&c.to_string());
+                                thread::sleep(Duration::from_millis(interval));
+                            }
+                        } else {
+                             let _ = enigo.text(&text);
+                        }
+                        logger(format!("Subgraph: Tying '{}'", text));
+                    }
+                }
+                _ => {
+                    // For unsupported nodes, just log and try to continue
+                    logger(format!("Subgraph: Executing {:?}", node.node_type));
+                }
+            }
+            
+            // Follow to next node, checking for Continue port connection
+            let mut next_node = None;
+            for conn in &graph.connections {
+                if conn.from_node == current_node_id && conn.from_port == "Next" {
+                    // Check if target is a Continue port
+                    if let Some(parent_id) = parent_loop_id {
+                        if conn.to_node == parent_id && conn.to_port == "Continue" {
+                            // Set continue signal and exit
+                            {
+                                let mut ctx = context.lock().unwrap();
+                                ctx.variables.insert(
+                                    format!("__continue_signal_{}", parent_id.to_string()),
+                                    VariableValue::Boolean(true),
+                                );
+                            }
+                            return;
+                        }
+                    }
+                    next_node = Some(conn.to_node);
+                    break;
+                }
+            }
+            
+            match next_node {
+                Some(next) => current_node_id = next,
+                None => break, // End of flow
+            }
+        }
+    }
+
+    /// Helper for executing nested flows (like loop bodies) - DEPRECATED, use execute_subgraph
+    #[allow(dead_code)]
     fn execute_flow_from(
         graph: Arc<BlueprintGraph>,
         start_id: Uuid,
         context: Arc<Mutex<ExecutionContext>>,
-        tx: Sender<String>,
+        tx: Sender<ExecutionEvent>,
         mut steps: usize,
         max_steps: usize,
     ) {
         let logger = |msg: String| {
-            let _ = tx.send(msg);
+            let _ = tx.send(ExecutionEvent::Log(msg));
         };
         let mut current = start_id;
 
@@ -2255,7 +2676,8 @@ impl Interpreter {
                         };
                         logger(format!("PRINT [Loop]: {}", output));
                     }
-                    if let Some(next) = Self::follow_flow(&graph, current, "Next") {
+                    // Use follow_flow_with_continue to handle ForLoopAsync Continue signals
+                    if let Some(next) = Self::follow_flow_with_continue(&graph, current, "Next", &context) {
                         current = next;
                     } else {
                         break;
@@ -2265,7 +2687,7 @@ impl Interpreter {
                     if let Ok(val) = Self::evaluate_input(&graph, current, "Value", &context) {
                         context.lock().unwrap().variables.insert(name.clone(), val);
                     }
-                    if let Some(next) = Self::follow_flow(&graph, current, "Next") {
+                    if let Some(next) = Self::follow_flow_with_continue(&graph, current, "Next", &context) {
                         current = next;
                     } else {
                         break;
@@ -2278,13 +2700,21 @@ impl Interpreter {
                         _ => 100,
                     };
                     thread::sleep(std::time::Duration::from_millis(ms));
-                    if let Some(next) = Self::follow_flow(&graph, current, "Next") {
+                    if let Some(next) = Self::follow_flow_with_continue(&graph, current, "Next", &context) {
                         current = next;
                     } else {
                         break;
                     }
                 }
-                _ => break,
+                _ => {
+                    // Log unsupported node type and try to continue to next
+                    logger(format!("WARNING: Node type {:?} not fully supported in loop body, attempting to continue flow", node.node_type));
+                    if let Some(next) = Self::follow_flow_with_continue(&graph, current, "Next", &context) {
+                        current = next;
+                    } else {
+                        break;
+                    }
+                }
             }
             steps += 1;
         }
@@ -2558,6 +2988,26 @@ impl Interpreter {
                 };
                 Ok(VariableValue::Float(random_val))
             }
+            // GetTimestamp - Returns current Unix timestamp
+            NodeType::GetTimestamp => {
+                use std::time::{SystemTime, UNIX_EPOCH};
+                let use_millis = match Self::evaluate_input(graph, node.id, "Milliseconds", context) {
+                    Ok(VariableValue::Boolean(b)) => b,
+                    _ => true, // Default to milliseconds
+                };
+                
+                let timestamp = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap();
+                
+                let value = if use_millis {
+                    timestamp.as_millis() as i64  // 13-digit (milliseconds)
+                } else {
+                    timestamp.as_secs() as i64    // 10-digit (seconds)
+                };
+                
+                Ok(VariableValue::Integer(value))
+            }
             // Concat
             NodeType::Concat => {
                 let a = Self::evaluate_input(graph, node.id, "A", context)?;
@@ -2657,6 +3107,26 @@ impl Interpreter {
                         Some((_, rest)) => rest.split(&after_s).next().unwrap_or("").to_string(),
                         None => String::new(),
                     }
+                };
+
+                Ok(VariableValue::String(result))
+            }
+            // StringTrim - Trim whitespace with mode options
+            // Mode: 0 = Both (default), 1 = Start only, 2 = End only, 3 = All (including internal)
+            NodeType::StringTrim => {
+                let input = Self::evaluate_input(graph, node.id, "String", context)?;
+                let mode = match Self::evaluate_input(graph, node.id, "Mode", context) {
+                    Ok(VariableValue::Integer(m)) => m,
+                    Ok(VariableValue::Float(f)) => f as i64,
+                    _ => 0,
+                };
+
+                let s = Self::to_string(&input);
+                let result = match mode {
+                    1 => s.trim_start().to_string(),     // Start only
+                    2 => s.trim_end().to_string(),       // End only
+                    3 => s.split_whitespace().collect::<Vec<_>>().join(""), // Remove ALL whitespace
+                    _ => s.trim().to_string(),           // Both (default)
                 };
 
                 Ok(VariableValue::String(result))
