@@ -40,7 +40,9 @@
             &screen, 
             &template, 
             10, // low tolerance
-            0, 0, screen.width(), screen.height()
+            0, 0, screen.width(), screen.height(),
+            1.0, // scale_factor
+            super::image_matching::MatchingAlgorithm::NCC,
         );
         println!("Case A Result: Found={} at ({},{}) took {:.2}s", found, found_x, found_y, start.elapsed().as_secs_f64());
         
@@ -99,7 +101,9 @@
                 &screen, 
                 &small_template, 
                 40, // Reduced tolerance to avoid false positives
-                0, 0, screen.width(), screen.height()
+                0, 0, screen.width(), screen.height(),
+                1.0, // scale_factor
+                super::image_matching::MatchingAlgorithm::NCC,
             );
             println!("Case B Result: Found={} at ({},{}) took {:.2}s", found, found_x, found_y, start.elapsed().as_secs_f64());
 

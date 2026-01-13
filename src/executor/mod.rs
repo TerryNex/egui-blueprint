@@ -1905,13 +1905,26 @@ impl Interpreter {
                     logger(format!("GetPixelColor: ({}, {})", x, y));
 
                     // Capture screen and get pixel color
+                    // Note: x,y are in LOGICAL pixels, xcap captures in PHYSICAL pixels
                     let (r, g, b, success) = match xcap::Monitor::all() {
                         Ok(monitors) => {
                             if let Some(monitor) = monitors.first() {
                                 match monitor.capture_image() {
                                     Ok(img) => {
-                                        if x < img.width() && y < img.height() {
-                                            let pixel = img.get_pixel(x, y);
+                                        // Calculate DPI scale factor
+                                        let logical_width = monitor.width().ok().unwrap_or(img.width()) as f32;
+                                        let physical_width = img.width() as f32;
+                                        let scale_factor = physical_width / logical_width;
+                                        
+                                        // Convert logical coords to physical pixels
+                                        let physical_x = (x as f32 * scale_factor) as u32;
+                                        let physical_y = (y as f32 * scale_factor) as u32;
+                                        
+                                        logger(format!("GetPixelColor: logical ({},{}) -> physical ({},{}) scale={:.1}", 
+                                            x, y, physical_x, physical_y, scale_factor));
+                                        
+                                        if physical_x < img.width() && physical_y < img.height() {
+                                            let pixel = img.get_pixel(physical_x, physical_y);
                                             (
                                                 pixel[0] as i64,
                                                 pixel[1] as i64,
@@ -2012,17 +2025,29 @@ impl Interpreter {
                         region_h
                     ));
 
+                    // Note: region coords are in LOGICAL pixels, xcap captures in PHYSICAL pixels
                     let (found_x, found_y, found) = match xcap::Monitor::all() {
                         Ok(monitors) => {
                             if let Some(monitor) = monitors.first() {
                                 match monitor.capture_image() {
                                     Ok(img) => {
+                                        // Calculate DPI scale factor
+                                        let logical_width = monitor.width().ok().unwrap_or(img.width()) as f32;
+                                        let physical_width = img.width() as f32;
+                                        let scale_factor = physical_width / logical_width;
+                                        
+                                        // Convert logical region to physical pixels
+                                        let phys_region_x = (region_x as f32 * scale_factor) as u32;
+                                        let phys_region_y = (region_y as f32 * scale_factor) as u32;
+                                        let phys_region_w = (region_w as f32 * scale_factor) as u32;
+                                        let phys_region_h = (region_h as f32 * scale_factor) as u32;
+                                        
                                         let mut result = (0i64, 0i64, false);
-                                        let end_x = (region_x + region_w).min(img.width());
-                                        let end_y = (region_y + region_h).min(img.height());
+                                        let end_x = (phys_region_x + phys_region_w).min(img.width());
+                                        let end_y = (phys_region_y + phys_region_h).min(img.height());
 
-                                        'outer: for py in region_y..end_y {
-                                            for px in region_x..end_x {
+                                        'outer: for py in phys_region_y..end_y {
+                                            for px in phys_region_x..end_x {
                                                 let pixel = img.get_pixel(px, py);
                                                 let dr = (pixel[0] as i32 - target_r as i32).abs();
                                                 let dg = (pixel[1] as i32 - target_g as i32).abs();
@@ -2031,7 +2056,10 @@ impl Interpreter {
                                                     && dg <= tolerance
                                                     && db <= tolerance
                                                 {
-                                                    result = (px as i64, py as i64, true);
+                                                    // Convert found position back to logical pixels
+                                                    let logical_x = (px as f32 / scale_factor) as i64;
+                                                    let logical_y = (py as f32 / scale_factor) as i64;
+                                                    result = (logical_x, logical_y, true);
                                                     break 'outer;
                                                 }
                                             }
@@ -2115,12 +2143,22 @@ impl Interpreter {
                     let start = std::time::Instant::now();
                     let mut found = false;
 
+                    // Note: x,y are in LOGICAL pixels, xcap captures in PHYSICAL pixels
                     while start.elapsed().as_millis() < timeout_ms as u128 {
                         if let Ok(monitors) = xcap::Monitor::all() {
                             if let Some(monitor) = monitors.first() {
                                 if let Ok(img) = monitor.capture_image() {
-                                    if x < img.width() && y < img.height() {
-                                        let pixel = img.get_pixel(x, y);
+                                    // Calculate DPI scale factor
+                                    let logical_width = monitor.width().ok().unwrap_or(img.width()) as f32;
+                                    let physical_width = img.width() as f32;
+                                    let scale_factor = physical_width / logical_width;
+                                    
+                                    // Convert logical coords to physical pixels
+                                    let physical_x = (x as f32 * scale_factor) as u32;
+                                    let physical_y = (y as f32 * scale_factor) as u32;
+                                    
+                                    if physical_x < img.width() && physical_y < img.height() {
+                                        let pixel = img.get_pixel(physical_x, physical_y);
                                         let dr = (pixel[0] as i32 - target_r as i32).abs();
                                         let dg = (pixel[1] as i32 - target_g as i32).abs();
                                         let db = (pixel[2] as i32 - target_b as i32).abs();
@@ -2178,10 +2216,15 @@ impl Interpreter {
                         Self::evaluate_input(&graph, current_node_id, "RegionH", &context)
                             .map(|v| Self::to_float(&v) as u32)
                             .unwrap_or(1080);
+                    let algorithm_str =
+                        Self::evaluate_input(&graph, current_node_id, "Algorithm", &context)
+                            .map(|v| Self::to_string(&v))
+                            .unwrap_or_else(|_| "NCC".to_string());
+                    let algorithm = image_matching::MatchingAlgorithm::from_str(&algorithm_str);
 
                     logger(format!(
-                        "FindImage: {} tolerance={} in region ({},{})x{}x{}",
-                        image_path, tolerance, region_x, region_y, region_w, region_h
+                        "FindImage: {} tolerance={} algorithm={:?} in region ({},{})x{}x{}",
+                        image_path, tolerance, algorithm, region_x, region_y, region_w, region_h
                     ));
 
                     // Check if file exists and show absolute path for debugging
@@ -2203,16 +2246,31 @@ impl Interpreter {
                                     if let Some(monitor) = monitors.first() {
                                         match monitor.capture_image() {
                                             Ok(screen) => {
+                                                // Detect DPI scale factor
+                                                // xcap captures in physical pixels
+                                                // monitor.width() returns logical width
+                                                let logical_width = monitor.width().ok().unwrap_or(screen.width()) as f32;
+                                                let physical_width = screen.width() as f32;
+                                                let scale_factor = physical_width / logical_width;
+                                                
                                                 logger(format!(
-                                                    "FindImage: Screen captured {}x{} pixels",
-                                                    screen.width(), screen.height()
+                                                    "FindImage: Screen {}x{} physical, scale={:.1}x",
+                                                    screen.width(), screen.height(), scale_factor
                                                 ));
                                                 
-                                                logger(format!("FindImage: Starting template matching..."));
+                                                // Log effective search region (in physical pixels)
+                                                let phys_w = (region_w as f32 * scale_factor) as u32;
+                                                let phys_h = (region_h as f32 * scale_factor) as u32;
+                                                logger(format!(
+                                                    "FindImage: Search region {}x{} (logical {}x{}), template {}x{}",
+                                                    phys_w, phys_h, region_w, region_h, template.width(), template.height()
+                                                ));
+                                                
+                                                logger(format!("FindImage: Starting {:?} matching (parallel)...", algorithm));
                                                 let start_time = std::time::Instant::now();
                                                 let result = Self::find_template_in_image(
                                                     &screen, &template, tolerance, region_x, region_y,
-                                                    region_w, region_h,
+                                                    region_w, region_h, scale_factor, algorithm,
                                                 );
                                                 logger(format!(
                                                     "FindImage: Template matching took {:.2}s",
@@ -2304,6 +2362,11 @@ impl Interpreter {
                                 if let Ok(monitors) = xcap::Monitor::all() {
                                     if let Some(monitor) = monitors.first() {
                                         if let Ok(screen) = monitor.capture_image() {
+                                            // Detect scale factor
+                                            let logical_width = monitor.width().ok().unwrap_or(screen.width()) as f32;
+                                            let physical_width = screen.width() as f32;
+                                            let scale_factor = physical_width / logical_width;
+                                            
                                             let (fx, fy, f) = Self::find_template_in_image(
                                                 &screen,
                                                 &template,
@@ -2312,6 +2375,8 @@ impl Interpreter {
                                                 0,
                                                 screen.width(),
                                                 screen.height(),
+                                                scale_factor,
+                                                image_matching::MatchingAlgorithm::NCC, // WaitForImage uses NCC by default
                                             );
                                             if f {
                                                 result = (fx, fy, true);
@@ -3466,8 +3531,10 @@ impl Interpreter {
         region_y: u32,
         region_w: u32,
         region_h: u32,
+        scale_factor: f32,
+        algorithm: image_matching::MatchingAlgorithm,
     ) -> (i64, i64, bool) {
-        image_matching::find_template_in_image(screen, template, tolerance, region_x, region_y, region_w, region_h)
+        image_matching::find_template_in_image(screen, template, tolerance, region_x, region_y, region_w, region_h, scale_factor, algorithm)
     }
 
     fn compare_images(img1: &image::RgbaImage, img2: &image::RgbaImage, tolerance: i32) -> f64 {

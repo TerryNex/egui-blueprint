@@ -83,6 +83,23 @@ Large graphs may experience lag during node drag operations.
 
 Nodes do not push each other when overlapping.
 
+### Bug #27: Cursor Info Color Display Incorrect - `[ ]` Pending
+
+When hovering over colored areas, the displayed color in the Cursor Info tooltip is incorrect:
+
+- Colors flicker between gray/white/black and the actual color when moving mouse
+- When mouse is stationary, always shows `#6C6C6C` (gray)
+- **Root Cause Analysis**: Likely XCap captures the app window itself (including the tooltip) rather than the underlying screen content. Need to capture screen without the app window, or delay capture.
+- **Possible Solution**: Use system screenshot API that excludes current app, or temporarily hide tooltip during capture.
+
+### Bug #28: Cursor Info Tooltip Limited to App Window - `[ ]` Pending
+
+The Cursor Info tooltip only appears when cursor is inside the application window.
+
+- Tooltip should follow cursor globally on the entire screen (like screenshot tools)
+- **Root Cause**: egui Area positioning is relative to the app window, not the entire screen
+- **Possible Solution**: Create a separate borderless/transparent overlay window that follows cursor globally
+
 ---
 
 ## 💡 Low Priority / Nice to Have

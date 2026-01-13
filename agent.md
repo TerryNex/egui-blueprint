@@ -68,6 +68,7 @@ Before final delivery of ANY code changes:
 > **File Size Guideline**: Each code file should remain under 300 lines when possible to improve readability and reduce cognitive load when making changes.
 
 ### Editor Code (`src/editor.rs` or `src/editor/`)
+
 | Module | Purpose |
 |--------|---------|
 | `editor.rs` | Main GraphEditor struct, show() function, all UI logic |
@@ -79,6 +80,7 @@ Before final delivery of ANY code changes:
 | Future: `node_finder.rs` | Add node search menu |
 
 ### Executor Code (`src/executor.rs` or `src/executor/`)
+
 | Module | Purpose |
 |--------|---------|
 | `executor.rs` | Legacy single-file version (functional) |
@@ -91,8 +93,53 @@ Before final delivery of ANY code changes:
 | `executor/image_recognition.rs` | find_template_in_image, compare_images |
 
 ### Data Structures (`src/`)
+
 | File | Purpose |
 |------|---------|
 | `graph.rs` | BlueprintGraph, Node, Connection, VariableValue |
 | `node_types.rs` | NodeType enum, DataType enum |
 | `history.rs` | UndoStack for undo/redo |
+
+---
+
+## Critical Knowledge: DPI Scaling (Retina Displays)
+
+> [!CAUTION]
+> **macOS Retina displays use different coordinate systems!**
+
+### The Problem
+
+- **`enigo.location()`** returns **LOGICAL** coordinates (what user sees)
+- **`xcap.capture_image()`** captures in **PHYSICAL** pixels (2x on Retina)
+- **`monitor.width()`** returns **LOGICAL** width
+
+### The Solution
+
+Always calculate `scale_factor` when working with screen capture:
+
+```rust
+// Calculate DPI scale factor
+let logical_width = monitor.width().ok().unwrap_or(img.width()) as f32;
+let physical_width = img.width() as f32;
+let scale_factor = physical_width / logical_width;
+
+// Convert LOGICAL to PHYSICAL coords (for image access)
+let physical_x = (logical_x as f32 * scale_factor) as u32;
+let physical_y = (logical_y as f32 * scale_factor) as u32;
+
+// Convert PHYSICAL to LOGICAL coords (for output)
+let logical_x = (physical_x as f32 / scale_factor) as i64;
+let logical_y = (physical_y as f32 / scale_factor) as i64;
+```
+
+### Affected Nodes
+
+- `GetPixelColor` - Input: logical, Access: physical
+- `FindColor` - Input region: logical, Search: physical, Output: logical
+- `WaitForColor` - Input coords: logical, Access: physical
+- `FindImage` - Already handled in `image_matching.rs`
+- Cursor Info Overlay - Uses enigo (logical) + xcap (physical)
+
+### Reference
+
+See `src/executor/image_matching.rs` lines 11-15 for canonical documentation.

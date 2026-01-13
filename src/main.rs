@@ -1600,72 +1600,105 @@ impl eframe::App for MyApp {
                 });
             });
 
-        // Cursor Info Overlay - floating panel at bottom-right showing cursor position and pixel color
+        // Cursor Info Overlay - floating tooltip near cursor showing position and pixel color
         if self.show_cursor_info {
             // Request continuous repaint when cursor info is shown
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
             
-            egui::Window::new("Cursor Info")
-                .title_bar(true)
-                .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-10.0, -10.0))
-                .show(ctx, |ui| {
-                    // Get cursor position using enigo
-                    use enigo::{Enigo, Settings, Mouse};
-                    if let Ok(enigo) = Enigo::new(&Settings::default()) {
-                        if let Ok((x, y)) = enigo.location() {
-                            ui.horizontal(|ui| {
-                                ui.label("Position:");
-                                ui.monospace(format!("X: {}, Y: {}", x, y));
-                            });
-                            
-                            // Get pixel color using xcap
-                            let color_info = (|| -> Option<(u8, u8, u8, String)> {
-                                use xcap::Monitor;
-                                let monitors = Monitor::all().ok()?;
-                                let monitor = monitors.first()?;
-                                let image = monitor.capture_image().ok()?;
-                                
-                                // Adjust coordinates for monitor bounds
-                                let mon_x = monitor.x().ok()?;
-                                let mon_y = monitor.y().ok()?;
-                                let monitor_x = (x - mon_x) as u32;
-                                let monitor_y = (y - mon_y) as u32;
-
-                                
-                                if monitor_x < image.width() && monitor_y < image.height() {
-                                    let pixel = image.get_pixel(monitor_x, monitor_y);
-                                    let r = pixel[0];
-                                    let g = pixel[1];
-                                    let b = pixel[2];
-                                    let hex = format!("#{:02X}{:02X}{:02X}", r, g, b);
-                                    Some((r, g, b, hex))
-                                } else {
-                                    None
-                                }
-                            })();
-                            
-                            if let Some((r, g, b, hex)) = color_info {
-                                ui.horizontal(|ui| {
-                                    ui.label("Color:");
-                                    // Show color preview
-                                    let (rect, _) = ui.allocate_exact_size(
-                                        egui::vec2(16.0, 16.0),
-                                        egui::Sense::hover()
-                                    );
-                                    ui.painter().rect_filled(
-                                        rect,
-                                        2.0,
-                                        egui::Color32::from_rgb(r, g, b)
-                                    );
-                                    ui.monospace(hex);
-                                });
-                            }
+            // Get cursor position using enigo (returns LOGICAL coordinates)
+            use enigo::{Enigo, Settings, Mouse};
+            if let Ok(enigo) = Enigo::new(&Settings::default()) {
+                if let Ok((cursor_x, cursor_y)) = enigo.location() {
+                    // Get pixel color using xcap (captures in PHYSICAL pixels)
+                    let color_info = (|| -> Option<(u8, u8, u8, String, f32)> {
+                        use xcap::Monitor;
+                        let monitors = Monitor::all().ok()?;
+                        let monitor = monitors.first()?;
+                        let image = monitor.capture_image().ok()?;
+                        
+                        // Calculate DPI scale factor
+                        // xcap captures in physical pixels, monitor.width() returns logical width
+                        let logical_width = monitor.width().ok()? as f32;
+                        let physical_width = image.width() as f32;
+                        let scale_factor = physical_width / logical_width;
+                        
+                        // Convert logical cursor position to physical pixel coordinates
+                        let mon_x = monitor.x().ok()?;
+                        let mon_y = monitor.y().ok()?;
+                        let logical_x = cursor_x - mon_x;
+                        let logical_y = cursor_y - mon_y;
+                        
+                        // Scale to physical pixels
+                        let physical_x = (logical_x as f32 * scale_factor) as u32;
+                        let physical_y = (logical_y as f32 * scale_factor) as u32;
+                        
+                        if physical_x < image.width() && physical_y < image.height() {
+                            let pixel = image.get_pixel(physical_x, physical_y);
+                            let r = pixel[0];
+                            let g = pixel[1];
+                            let b = pixel[2];
+                            let hex = format!("#{:02X}{:02X}{:02X}", r, g, b);
+                            Some((r, g, b, hex, scale_factor))
+                        } else {
+                            None
                         }
-                    }
-                });
+                    })();
+                    
+                    // Calculate tooltip position in screen coordinates
+                    // Note: egui uses logical coordinates for UI positioning
+                    let tooltip_offset = egui::vec2(20.0, 20.0);
+                    
+                    // Use pointer position from egui for tooltip (more accurate for window-relative positioning)
+                    let tooltip_pos = ctx.input(|i| {
+                        i.pointer.hover_pos().unwrap_or(egui::pos2(0.0, 0.0)) + tooltip_offset
+                    });
+                    
+                    // Use Area for floating tooltip that follows cursor
+                    egui::Area::new(egui::Id::new("cursor_info_tooltip"))
+                        .fixed_pos(tooltip_pos)
+                        .order(egui::Order::Tooltip)
+                        .show(ctx, |ui| {
+                            egui::Frame::popup(ui.style())
+                                .fill(egui::Color32::from_rgba_unmultiplied(30, 30, 30, 230))
+                                .stroke(egui::Stroke::new(1.0, egui::Color32::GRAY))
+                                .rounding(4.0)
+                                .inner_margin(6.0)
+                                .show(ui, |ui| {
+                                    // Crosshair icon + Position (show logical coords as user expects)
+                                    ui.horizontal(|ui| {
+                                        ui.label("✚");
+                                        ui.monospace(format!("{}, {}", cursor_x, cursor_y));
+                                    });
+                                    
+                                    // Color info
+                                    if let Some((r, g, b, hex, _scale)) = color_info {
+                                        ui.horizontal(|ui| {
+                                            // Color preview square
+                                            let (rect, _) = ui.allocate_exact_size(
+                                                egui::vec2(14.0, 14.0),
+                                                egui::Sense::hover()
+                                            );
+                                            ui.painter().rect_filled(
+                                                rect,
+                                                2.0,
+                                                egui::Color32::from_rgb(r, g, b)
+                                            );
+                                            ui.painter().rect_stroke(
+                                                rect,
+                                                2.0,
+                                                egui::Stroke::new(1.0, egui::Color32::WHITE),
+                                                egui::StrokeKind::Outside,
+                                            );
+                                            ui.monospace(hex);
+                                        });
+                                    }
+                                });
+                        });
+                }
+            }
         }
+
+
 
         egui::CentralPanel::default().show(ctx, |ui| {
             // Undo/Redo Input

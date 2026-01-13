@@ -1848,7 +1848,11 @@ impl GraphEditor {
                 if let crate::graph::VariableValue::String(path) = &path_input.default_value {
                     if !path.is_empty() {
                         let thumb_size = 48.0 * self.zoom;
-                        let thumb_pos = screen_pos + Vec2::new(node_rect.width() - thumb_size - 5.0, y_offset+100.0);
+                        // Fixed scaling: all offsets multiplied by zoom
+                        let thumb_pos = screen_pos + Vec2::new(
+                            node_rect.width() - thumb_size - 5.0 * self.zoom,
+                            y_offset + 100.0 * self.zoom
+                        );
                         let thumb_rect = Rect::from_min_size(thumb_pos, Vec2::splat(thumb_size));
                         
                         // Draw thumbnail background
@@ -2136,9 +2140,21 @@ impl GraphEditor {
                                                         .with_stroke(true)
                                                         .show(ui, |ui| {
                                                             ui.label("Select Image Template:");
+                                                            
+                                                            // Separate search box instead of filtering by input value
+                                                            let search_id = ui.make_persistent_id("template_search");
+                                                            let mut search_text = ui.data_mut(|d| {
+                                                                d.get_temp::<String>(search_id).unwrap_or_default()
+                                                            });
+                                                            ui.horizontal(|ui| {
+                                                                ui.label("🔍");
+                                                                ui.text_edit_singleline(&mut search_text);
+                                                            });
+                                                            ui.data_mut(|d| d.insert_temp(search_id, search_text.clone()));
+                                                            
                                                             ui.separator();
 
-                                                            let search = s.to_lowercase();
+                                                            let search = search_text.to_lowercase();
                                                             let templates = self.available_templates.clone().unwrap_or_default();
 
                                                             if templates.is_empty() {
@@ -2227,14 +2243,37 @@ impl GraphEditor {
                                             );
                                         });
                                     } else {
-                                        if ui
-                                            .add(
-                                                egui::TextEdit::singleline(s)
-                                                    .desired_width(70.0 * self.zoom),
-                                            )
-                                            .lost_focus()
-                                        {
-                                            c = true;
+                                        // Check for Algorithm input in FindImage
+                                        let is_algorithm = input.name == "Algorithm"
+                                            && matches!(
+                                                node.node_type,
+                                                crate::node_types::NodeType::FindImage
+                                            );
+                                        
+                                        if is_algorithm {
+                                            const ALGORITHMS: [&str; 3] = ["NCC", "SSD", "SSDNorm"];
+                                            let current = s.clone();
+                                            egui::ComboBox::from_id_salt(format!("algo_{}", node.id))
+                                                .selected_text(&current)
+                                                .width(80.0 * self.zoom)
+                                                .show_ui(ui, |ui| {
+                                                    for algo in ALGORITHMS {
+                                                        if ui.selectable_label(current == algo, algo).clicked() {
+                                                            *s = algo.to_string();
+                                                            c = true;
+                                                        }
+                                                    }
+                                                });
+                                        } else {
+                                            if ui
+                                                .add(
+                                                    egui::TextEdit::singleline(s)
+                                                        .desired_width(70.0 * self.zoom),
+                                                )
+                                                .lost_focus()
+                                            {
+                                                c = true;
+                                            }
                                         }
                                     }
                                 }
@@ -2248,7 +2287,8 @@ impl GraphEditor {
                                 // Tolerance inputs should be clamped to 0-255 range
                                 let is_tolerance = input.name == "Tolerance";
                                 let drag = if is_tolerance {
-                                    egui::DragValue::new(i).range(0..=255)
+                                    // Tolerance: 1-100 where 100 = exact match, 1 = very loose
+                                    egui::DragValue::new(i).range(1..=100)
                                 } else {
                                     egui::DragValue::new(i)
                                 };

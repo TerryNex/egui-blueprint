@@ -1915,6 +1915,11 @@ pub fn get_ports_for_type(node_type: &NodeType) -> (Vec<Port>, Vec<Port>) {
                         data_type: DataType::Integer,
                         default_value: VariableValue::Integer(1080),
                     },
+                    Port {
+                        name: "Algorithm".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("NCC".into()),
+                    },
                 ],
                 vec![
                     Port {
