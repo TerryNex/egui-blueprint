@@ -53,12 +53,12 @@ impl ExecutionContext {
             stop_requested: Arc::new(AtomicBool::new(false)),
         }
     }
-    
+
     /// Check if stop has been requested
     pub fn should_stop(&self) -> bool {
         self.stop_requested.load(Ordering::Relaxed)
     }
-    
+
     /// Request execution to stop
     pub fn request_stop(&self) {
         self.stop_requested.store(true, Ordering::Relaxed);
@@ -122,7 +122,7 @@ impl Interpreter {
 
         rx
     }
-    
+
     /// Run graph asynchronously with a stop handle for UI control.
     /// Returns tuple of (log_receiver, stop_handle).
     /// Call `stop_handle.store(true, Ordering::Relaxed)` to request stop.
@@ -136,7 +136,7 @@ impl Interpreter {
 
         let graph = Arc::new(graph.clone());
         let context = Arc::new(Mutex::new(ExecutionContext::new()));
-        
+
         // Get reference to stop flag before spawning threads
         let stop_handle = {
             let ctx = context.lock().unwrap();
@@ -368,7 +368,7 @@ impl Interpreter {
                                 break;
                             }
                         }
-                        
+
                         let condition =
                             Self::evaluate_input(&graph, current_node_id, "Condition", &context)
                                 .unwrap_or(VariableValue::Boolean(false));
@@ -390,7 +390,7 @@ impl Interpreter {
                         }
                         iteration += 1;
                     }
-                    
+
                     // If stopped by user, break execution entirely
                     if stopped {
                         break;
@@ -446,12 +446,12 @@ impl Interpreter {
                         Ok(VariableValue::Float(ms)) => ms as u64,
                         _ => 0,
                     };
-                    
+
                     let start_time = std::time::Instant::now();
                     let mut timed_out = false;
-                    
+
                     logger("WaitForCondition: Waiting for condition...".to_string());
-                    
+
                     loop {
                         // Check stop requested
                         {
@@ -461,7 +461,7 @@ impl Interpreter {
                                 break;
                             }
                         }
-                        
+
                         // Check condition
                         let condition = Self::evaluate_input(&graph, current_node_id, "Condition", &context)
                             .unwrap_or(VariableValue::Boolean(false));
@@ -469,17 +469,17 @@ impl Interpreter {
                             logger("WaitForCondition: Condition met!".to_string());
                             break;
                         }
-                        
+
                         // Check timeout (0 = no timeout)
                         if timeout_ms > 0 && start_time.elapsed().as_millis() as u64 > timeout_ms {
                             timed_out = true;
                             logger(format!("WaitForCondition: Timed out after {}ms", timeout_ms));
                             break;
                         }
-                        
+
                         thread::sleep(Duration::from_millis(poll_interval));
                     }
-                    
+
                     // Store timed_out result for output port
                     {
                         let mut ctx = context.lock().unwrap();
@@ -489,7 +489,7 @@ impl Interpreter {
                             VariableValue::Boolean(timed_out),
                         );
                     }
-                    
+
                     if let Some(next) = Self::follow_flow(&graph, current_node_id, "Next") {
                         current_node_id = next;
                     } else {
@@ -505,9 +505,9 @@ impl Interpreter {
                         Ok(VariableValue::Integer(i)) => i,
                         _ => 10,
                     };
-                    
+
                     let node_id_str = current_node_id.to_string();
-                    
+
                     for i in start..end {
                         // Check stop requested
                         {
@@ -517,7 +517,7 @@ impl Interpreter {
                                 break;
                             }
                         }
-                        
+
                         // Set Index output
                         {
                             let mut ctx = context.lock().unwrap();
@@ -529,9 +529,9 @@ impl Interpreter {
                             // Clear continue signal for this iteration
                             ctx.variables.remove(&format!("__continue_signal_{}", node_id_str));
                         }
-                        
+
                         logger(format!("ForLoopAsync: Starting iteration {} of {}", i, end - 1));
-                        
+
                         // Execute the Loop body using full execution (supports ALL node types)
                         if let Some(loop_body) = Self::follow_flow(&graph, current_node_id, "Loop") {
                             // Use execute_subgraph which runs the full node execution logic
@@ -543,7 +543,7 @@ impl Interpreter {
                                 Some(current_node_id), // parent_loop_id for Continue signal handling
                             );
                         }
-                        
+
                         // Wait for Continue signal
                         logger(format!("ForLoopAsync: Waiting for Continue signal (iteration {})", i));
                         loop {
@@ -555,7 +555,7 @@ impl Interpreter {
                                     break;
                                 }
                             }
-                            
+
                             // Check if Continue signal was set
                             {
                                 let ctx = context.lock().unwrap();
@@ -564,11 +564,11 @@ impl Interpreter {
                                     break;
                                 }
                             }
-                            
+
                             thread::sleep(Duration::from_millis(50));
                         }
                     }
-                    
+
                     // Continue to Done
                     if let Some(next) = Self::follow_flow(&graph, current_node_id, "Done") {
                         current_node_id = next;
@@ -604,6 +604,62 @@ impl Interpreter {
                     }
                 }
 
+                // === ForEachLine - Iterate over lines in text ===
+                NodeType::ForEachLine => {
+                    let text = Self::evaluate_input(&graph, current_node_id, "Text", &context)
+                        .map(|v| Self::to_string(&v))
+                        .unwrap_or_default();
+
+                    let lines: Vec<&str> = text.lines().collect();
+                    let node_id_str = current_node_id.to_string();
+
+                    logger(format!("ForEachLine: Processing {} lines", lines.len()));
+
+                    for (i, line) in lines.iter().enumerate() {
+                        // Check if stop was requested
+                        {
+                            let ctx = context.lock().unwrap();
+                            if ctx.should_stop() {
+                                logger("ForEachLine: Stop requested by user".to_string());
+                                break;
+                            }
+                        }
+
+                        // Set Line and Index outputs
+                        {
+                            let mut ctx = context.lock().unwrap();
+                            ctx.variables.insert(
+                                format!("__out_{}_Line", node_id_str),
+                                VariableValue::String(line.to_string()),
+                            );
+                            ctx.variables.insert(
+                                format!("__out_{}_Index", node_id_str),
+                                VariableValue::Integer(i as i64),
+                            );
+                            // Also store as __loop_index for compatibility
+                            ctx.variables.insert("__loop_index".into(), VariableValue::Integer(i as i64));
+                        }
+
+                        // Execute the Loop body
+                        if let Some(loop_body) = Self::follow_flow(&graph, current_node_id, "Loop") {
+                            Self::execute_subgraph(
+                                graph.clone(),
+                                loop_body,
+                                context.clone(),
+                                tx.clone(),
+                                None,
+                            );
+                        }
+                    }
+
+                    // Continue to Done
+                    if let Some(next) = Self::follow_flow(&graph, current_node_id, "Done") {
+                        current_node_id = next;
+                    } else {
+                        break;
+                    }
+                }
+
                 // === Module H: Array Mutation Nodes ===
                 NodeType::ArrayPush => {
                     let var_name =
@@ -615,13 +671,25 @@ impl Interpreter {
 
                     {
                         let mut ctx = context.lock().unwrap();
+                        let node_id_str = current_node_id.to_string();
                         if let Some(VariableValue::Array(arr)) = ctx.variables.get_mut(&var_name) {
                             arr.push(value);
+                            // Store array for output port
+                            let arr_clone = arr.clone();
+                            ctx.variables.insert(
+                                format!("__out_{}_Array", node_id_str),
+                                VariableValue::Array(arr_clone),
+                            );
                             logger(format!("ArrayPush: Added element to '{}'", var_name));
                         } else {
                             // Create new array if variable doesn't exist or isn't an array
+                            let new_arr = vec![value];
                             ctx.variables
-                                .insert(var_name.clone(), VariableValue::Array(vec![value]));
+                                .insert(var_name.clone(), VariableValue::Array(new_arr.clone()));
+                            ctx.variables.insert(
+                                format!("__out_{}_Array", node_id_str),
+                                VariableValue::Array(new_arr),
+                            );
                             logger(format!("ArrayPush: Created new array '{}'", var_name));
                         }
                     }
@@ -641,21 +709,36 @@ impl Interpreter {
 
                     {
                         let mut ctx = context.lock().unwrap();
-                        if let Some(VariableValue::Array(arr)) = ctx.variables.get_mut(&var_name) {
-                            if let Some(popped) = arr.pop() {
-                                // Store popped value temporarily for output port
-                                ctx.variables.insert("__array_pop_result".into(), popped);
-                                logger(format!("ArrayPop: Removed element from '{}'", var_name));
-                            } else {
-                                ctx.variables
-                                    .insert("__array_pop_result".into(), VariableValue::None);
-                                logger(format!("ArrayPop: Array '{}' is empty", var_name));
+                        let node_id_str = current_node_id.to_string();
+                        
+                        // Handle ArrayPop - extract array, modify it, store results
+                        let (popped_value, arr_clone) = if let Some(VariableValue::Array(arr)) = ctx.variables.get_mut(&var_name) {
+                            let popped = arr.pop();
+                            let arr_clone = arr.clone();
+                            match popped {
+                                Some(v) => {
+                                    logger(format!("ArrayPop: Removed element from '{}'", var_name));
+                                    (v, arr_clone)
+                                },
+                                None => {
+                                    logger(format!("ArrayPop: Array '{}' is empty", var_name));
+                                    (VariableValue::None, arr_clone)
+                                }
                             }
                         } else {
-                            ctx.variables
-                                .insert("__array_pop_result".into(), VariableValue::None);
                             logger(format!("ArrayPop: Variable '{}' is not an array", var_name));
-                        }
+                            (VariableValue::None, vec![])
+                        };
+                        
+                        // Now store outputs after releasing the mutable borrow
+                        ctx.variables.insert(
+                            format!("__out_{}_Value", node_id_str),
+                            popped_value,
+                        );
+                        ctx.variables.insert(
+                            format!("__out_{}_Array", node_id_str),
+                            VariableValue::Array(arr_clone),
+                        );
                     }
 
                     if let Some(next) = Self::follow_flow(&graph, current_node_id, "Next") {
@@ -682,6 +765,7 @@ impl Interpreter {
 
                     {
                         let mut ctx = context.lock().unwrap();
+                        let node_id_str = current_node_id.to_string();
                         if let Some(VariableValue::Array(arr)) = ctx.variables.get_mut(&var_name) {
                             if index < arr.len() {
                                 arr[index] = value;
@@ -697,7 +781,17 @@ impl Interpreter {
                                     var_name, index
                                 ));
                             }
+                            // Store array for output port
+                            let arr_clone = arr.clone();
+                            ctx.variables.insert(
+                                format!("__out_{}_Array", node_id_str),
+                                VariableValue::Array(arr_clone),
+                            );
                         } else {
+                            ctx.variables.insert(
+                                format!("__out_{}_Array", node_id_str),
+                                VariableValue::Array(vec![]),
+                            );
                             logger(format!("ArraySet: Variable '{}' is not an array", var_name));
                         }
                     }
@@ -917,7 +1011,7 @@ impl Interpreter {
 
                     let x_val = Self::evaluate_input(&graph, current_node_id, "X", &context).unwrap_or(VariableValue::Integer(0));
                     let y_val = Self::evaluate_input(&graph, current_node_id, "Y", &context).unwrap_or(VariableValue::Integer(0));
-                    
+
                     let x = match x_val {
                         VariableValue::Integer(i) => i as i32,
                         VariableValue::Float(f) => f as i32,
@@ -974,7 +1068,7 @@ impl Interpreter {
 
                     let x_val = Self::evaluate_input(&graph, current_node_id, "X", &context).unwrap_or(VariableValue::Integer(0));
                     let y_val = Self::evaluate_input(&graph, current_node_id, "Y", &context).unwrap_or(VariableValue::Integer(0));
-                    
+
                     let x = match x_val {
                         VariableValue::Integer(i) => i as i32,
                         VariableValue::Float(f) => f as i32,
@@ -1173,7 +1267,7 @@ impl Interpreter {
                                     logger(format!("TypeString: Error typing '{}': {:?}", c, e));
                                 }
                             }
-                            
+
                             if delay_ms > 0 {
                                 thread::sleep(Duration::from_millis(delay_ms));
                             }
@@ -1422,7 +1516,7 @@ impl Interpreter {
                    if let Some(node) = graph.nodes.get(&current_node_id) {
                         let _ = Self::evaluate_node(&graph, node, "X", &context);
                    }
-                    
+
                     logger("GetWindowPosition: Executed".to_string());
 
                     if let Some(next) = Self::follow_flow(&graph, current_node_id, "Next") {
@@ -1800,7 +1894,7 @@ impl Interpreter {
                                         // Validate bounds
                                         let img_width = full_image.width();
                                         let img_height = full_image.height();
-                                        
+
                                         if x >= img_width || y >= img_height {
                                             logger(format!(
                                                 "RegionCapture: Start position ({},{}) out of bounds ({}x{})",
@@ -1811,12 +1905,12 @@ impl Interpreter {
                                             // Clamp width/height to image bounds
                                             let crop_width = width.min(img_width - x);
                                             let crop_height = height.min(img_height - y);
-                                            
+
                                             // Crop the image
                                             let cropped = image::imageops::crop_imm(
                                                 &full_image, x, y, crop_width, crop_height
                                             ).to_image();
-                                            
+
                                             // Generate filename
                                             let filename = if custom_filename.is_empty() {
                                                 let timestamp = chrono::Local::now()
@@ -1829,7 +1923,7 @@ impl Interpreter {
                                                 // Just filename, put in templates folder
                                                 format!("scripts/templates/{}", custom_filename)
                                             };
-                                            
+
                                             // Save cropped image
                                             match cropped.save(&filename) {
                                                 Ok(_) => {
@@ -1915,14 +2009,14 @@ impl Interpreter {
                                         let logical_width = monitor.width().ok().unwrap_or(img.width()) as f32;
                                         let physical_width = img.width() as f32;
                                         let scale_factor = physical_width / logical_width;
-                                        
+
                                         // Convert logical coords to physical pixels
                                         let physical_x = (x as f32 * scale_factor) as u32;
                                         let physical_y = (y as f32 * scale_factor) as u32;
-                                        
-                                        logger(format!("GetPixelColor: logical ({},{}) -> physical ({},{}) scale={:.1}", 
+
+                                        logger(format!("GetPixelColor: logical ({},{}) -> physical ({},{}) scale={:.1}",
                                             x, y, physical_x, physical_y, scale_factor));
-                                        
+
                                         if physical_x < img.width() && physical_y < img.height() {
                                             let pixel = img.get_pixel(physical_x, physical_y);
                                             (
@@ -2035,13 +2129,13 @@ impl Interpreter {
                                         let logical_width = monitor.width().ok().unwrap_or(img.width()) as f32;
                                         let physical_width = img.width() as f32;
                                         let scale_factor = physical_width / logical_width;
-                                        
+
                                         // Convert logical region to physical pixels
                                         let phys_region_x = (region_x as f32 * scale_factor) as u32;
                                         let phys_region_y = (region_y as f32 * scale_factor) as u32;
                                         let phys_region_w = (region_w as f32 * scale_factor) as u32;
                                         let phys_region_h = (region_h as f32 * scale_factor) as u32;
-                                        
+
                                         let mut result = (0i64, 0i64, false);
                                         let end_x = (phys_region_x + phys_region_w).min(img.width());
                                         let end_y = (phys_region_y + phys_region_h).min(img.height());
@@ -2152,11 +2246,11 @@ impl Interpreter {
                                     let logical_width = monitor.width().ok().unwrap_or(img.width()) as f32;
                                     let physical_width = img.width() as f32;
                                     let scale_factor = physical_width / logical_width;
-                                    
+
                                     // Convert logical coords to physical pixels
                                     let physical_x = (x as f32 * scale_factor) as u32;
                                     let physical_y = (y as f32 * scale_factor) as u32;
-                                    
+
                                     if physical_x < img.width() && physical_y < img.height() {
                                         let pixel = img.get_pixel(physical_x, physical_y);
                                         let dr = (pixel[0] as i32 - target_r as i32).abs();
@@ -2252,12 +2346,12 @@ impl Interpreter {
                                                 let logical_width = monitor.width().ok().unwrap_or(screen.width()) as f32;
                                                 let physical_width = screen.width() as f32;
                                                 let scale_factor = physical_width / logical_width;
-                                                
+
                                                 logger(format!(
                                                     "FindImage: Screen {}x{} physical, scale={:.1}x",
                                                     screen.width(), screen.height(), scale_factor
                                                 ));
-                                                
+
                                                 // Log effective search region (in physical pixels)
                                                 let phys_w = (region_w as f32 * scale_factor) as u32;
                                                 let phys_h = (region_h as f32 * scale_factor) as u32;
@@ -2265,7 +2359,7 @@ impl Interpreter {
                                                     "FindImage: Search region {}x{} (logical {}x{}), template {}x{}",
                                                     phys_w, phys_h, region_w, region_h, template.width(), template.height()
                                                 ));
-                                                
+
                                                 logger(format!("FindImage: Starting {:?} matching (parallel)...", algorithm));
                                                 let start_time = std::time::Instant::now();
                                                 let result = Self::find_template_in_image(
@@ -2323,7 +2417,7 @@ impl Interpreter {
                     }
 
                     logger(format!("FindImage: Execution complete, looking for Next connection..."));
-                    
+
                     if let Some(next) = Self::follow_flow(&graph, current_node_id, "Next") {
                         logger(format!("FindImage: Following flow to next node"));
                         current_node_id = next;
@@ -2366,7 +2460,7 @@ impl Interpreter {
                                             let logical_width = monitor.width().ok().unwrap_or(screen.width()) as f32;
                                             let physical_width = screen.width() as f32;
                                             let scale_factor = physical_width / logical_width;
-                                            
+
                                             let (fx, fy, f) = Self::find_template_in_image(
                                                 &screen,
                                                 &template,
@@ -2441,7 +2535,7 @@ impl Interpreter {
         }
         None
     }
-    
+
     /// Follow flow connection, but check if target is a ForLoopAsync Continue port.
     /// If it is, set the continue signal and return None (flow terminates here).
     fn follow_flow_with_continue(
@@ -2475,7 +2569,7 @@ impl Interpreter {
 
     /// Execute a subgraph starting from the given node.
     /// This is used for loop bodies and supports ALL node types.
-    /// parent_loop_id: If set, when flow reaches a Continue port connected to this loop, 
+    /// parent_loop_id: If set, when flow reaches a Continue port connected to this loop,
     /// it will set the continue signal and return.
     fn execute_subgraph(
         graph: Arc<BlueprintGraph>,
@@ -2487,18 +2581,18 @@ impl Interpreter {
         let logger = |msg: String| {
             let _ = tx.send(ExecutionEvent::Log(msg));
         };
-        
+
         let mut current_node_id = start_id;
         let max_steps = 10000;
         let mut steps = 0;
-        
+
         loop {
             if steps >= max_steps {
                 logger("Max steps reached in subgraph".to_string());
                 break;
             }
             steps += 1;
-            
+
             // Check stop requested
             {
                 let ctx = context.lock().unwrap();
@@ -2506,15 +2600,15 @@ impl Interpreter {
                     break;
                 }
             }
-            
+
             let node = match graph.nodes.get(&current_node_id) {
                 Some(n) => n.clone(),
                 None => break,
             };
-            
+
             // Notify UI that node is active
             let _ = tx.send(ExecutionEvent::NodeActive(current_node_id));
-            
+
             // Check if this node's Next output connects to a Continue port of parent loop
             if let Some(parent_id) = parent_loop_id {
                 for conn in &graph.connections {
@@ -2533,7 +2627,7 @@ impl Interpreter {
                     }
                 }
             }
-            
+
             // Execute node based on type - simplified common cases
             match &node.node_type {
                 NodeType::BlueprintFunction { name } if name == "Print String" => {
@@ -2652,7 +2746,7 @@ impl Interpreter {
                         Ok(VariableValue::String(s)) => s,
                         _ => String::new(),
                     };
-                    
+
                     let interval = if matches!(node.node_type, NodeType::TypeString) {
                         match Self::evaluate_input(&graph, current_node_id, "Interval (ms)", &context) {
                              Ok(VariableValue::Integer(i)) => i as u64,
@@ -2675,12 +2769,635 @@ impl Interpreter {
                         logger(format!("Subgraph: Tying '{}'", text));
                     }
                 }
+                NodeType::FindImage => {
+                    let image_path =
+                        Self::evaluate_input(&graph, current_node_id, "ImagePath", &context)
+                            .map(|v| Self::to_string(&v))
+                            .unwrap_or_default();
+                    let tolerance =
+                        Self::evaluate_input(&graph, current_node_id, "Tolerance", &context)
+                            .map(|v| Self::to_float(&v) as i32)
+                            .unwrap_or(10);
+                    let region_x =
+                        Self::evaluate_input(&graph, current_node_id, "RegionX", &context)
+                            .map(|v| Self::to_float(&v) as u32)
+                            .unwrap_or(0);
+                    let region_y =
+                        Self::evaluate_input(&graph, current_node_id, "RegionY", &context)
+                            .map(|v| Self::to_float(&v) as u32)
+                            .unwrap_or(0);
+                    let region_w =
+                        Self::evaluate_input(&graph, current_node_id, "RegionW", &context)
+                            .map(|v| Self::to_float(&v) as u32)
+                            .unwrap_or(1920);
+                    let region_h =
+                        Self::evaluate_input(&graph, current_node_id, "RegionH", &context)
+                            .map(|v| Self::to_float(&v) as u32)
+                            .unwrap_or(1080);
+                    let algorithm_str =
+                        Self::evaluate_input(&graph, current_node_id, "Algorithm", &context)
+                            .map(|v| Self::to_string(&v))
+                            .unwrap_or_else(|_| "NCC".to_string());
+                    let algorithm = image_matching::MatchingAlgorithm::from_str(&algorithm_str);
+
+                    logger(format!(
+                        "Subgraph FindImage: {} tolerance={} algorithm={:?}",
+                        image_path, tolerance, algorithm
+                    ));
+
+                    let (found_x, found_y, found) = match image::open(&image_path) {
+                        Ok(template) => {
+                            let template = template.to_rgba8();
+                            match xcap::Monitor::all() {
+                                Ok(monitors) => {
+                                    if let Some(monitor) = monitors.first() {
+                                        match monitor.capture_image() {
+                                            Ok(screen) => {
+                                                let logical_width = monitor.width().ok().unwrap_or(screen.width()) as f32;
+                                                let physical_width = screen.width() as f32;
+                                                let scale_factor = physical_width / logical_width;
+
+                                                Self::find_template_in_image(
+                                                    &screen, &template, tolerance, region_x, region_y,
+                                                    region_w, region_h, scale_factor, algorithm,
+                                                )
+                                            }
+                                            Err(_) => (0, 0, false),
+                                        }
+                                    } else {
+                                        (0, 0, false)
+                                    }
+                                }
+                                Err(_) => (0, 0, false),
+                            }
+                        }
+                        Err(e) => {
+                            logger(format!("Subgraph FindImage: Template load error - {}", e));
+                            (0, 0, false)
+                        }
+                    };
+
+                    logger(format!(
+                        "Subgraph FindImage: Found={} at ({},{})",
+                        found, found_x, found_y
+                    ));
+
+                    {
+                        let mut ctx = context.lock().unwrap();
+                        let node_id_str = current_node_id.to_string();
+                        ctx.variables.insert(
+                            format!("__out_{}_X", node_id_str),
+                            VariableValue::Integer(found_x),
+                        );
+                        ctx.variables.insert(
+                            format!("__out_{}_Y", node_id_str),
+                            VariableValue::Integer(found_y),
+                        );
+                        ctx.variables.insert(
+                            format!("__out_{}_Found", node_id_str),
+                            VariableValue::Boolean(found),
+                        );
+                    }
+                }
+                NodeType::WaitForImage => {
+                    let image_path =
+                        Self::evaluate_input(&graph, current_node_id, "ImagePath", &context)
+                            .map(|v| Self::to_string(&v))
+                            .unwrap_or_default();
+                    let tolerance =
+                        Self::evaluate_input(&graph, current_node_id, "Tolerance", &context)
+                            .map(|v| Self::to_float(&v) as i32)
+                            .unwrap_or(10);
+                    let timeout_ms =
+                        Self::evaluate_input(&graph, current_node_id, "Timeout", &context)
+                            .map(|v| Self::to_float(&v) as u64)
+                            .unwrap_or(5000);
+
+                    logger(format!(
+                        "Subgraph WaitForImage: {} timeout={}ms",
+                        image_path, timeout_ms
+                    ));
+
+                    let (found_x, found_y, found) = match image::open(&image_path) {
+                        Ok(template) => {
+                            let template = template.to_rgba8();
+                            let start = std::time::Instant::now();
+                            let mut result = (0i64, 0i64, false);
+
+                            while start.elapsed().as_millis() < timeout_ms as u128 {
+                                // Check stop requested
+                                {
+                                    let ctx = context.lock().unwrap();
+                                    if ctx.should_stop() {
+                                        break;
+                                    }
+                                }
+
+                                if let Ok(monitors) = xcap::Monitor::all() {
+                                    if let Some(monitor) = monitors.first() {
+                                        if let Ok(screen) = monitor.capture_image() {
+                                            let logical_width = monitor.width().ok().unwrap_or(screen.width()) as f32;
+                                            let physical_width = screen.width() as f32;
+                                            let scale_factor = physical_width / logical_width;
+
+                                            let (fx, fy, f) = Self::find_template_in_image(
+                                                &screen,
+                                                &template,
+                                                tolerance,
+                                                0, 0, screen.width(), screen.height(),
+                                                scale_factor,
+                                                image_matching::MatchingAlgorithm::NCC,
+                                            );
+                                            if f {
+                                                result = (fx, fy, true);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                thread::sleep(Duration::from_millis(200));
+                            }
+                            result
+                        }
+                        Err(e) => {
+                            logger(format!("Subgraph WaitForImage: Template error - {}", e));
+                            (0, 0, false)
+                        }
+                    };
+
+                    logger(format!(
+                        "Subgraph WaitForImage: Found={} at ({},{})",
+                        found, found_x, found_y
+                    ));
+
+                    {
+                        let mut ctx = context.lock().unwrap();
+                        let node_id_str = current_node_id.to_string();
+                        ctx.variables.insert(
+                            format!("__out_{}_X", node_id_str),
+                            VariableValue::Integer(found_x),
+                        );
+                        ctx.variables.insert(
+                            format!("__out_{}_Y", node_id_str),
+                            VariableValue::Integer(found_y),
+                        );
+                        ctx.variables.insert(
+                            format!("__out_{}_Found", node_id_str),
+                            VariableValue::Boolean(found),
+                        );
+                    }
+                }
+                NodeType::DoubleClick => {
+                    if let Ok(mut enigo) = Enigo::new(&Settings::default()) {
+                        let x = Self::evaluate_input(&graph, current_node_id, "X", &context)
+                            .map(|v| Self::to_float(&v) as i32).unwrap_or(0);
+                        let y = Self::evaluate_input(&graph, current_node_id, "Y", &context)
+                            .map(|v| Self::to_float(&v) as i32).unwrap_or(0);
+                        let _ = enigo.move_mouse(x, y, Coordinate::Abs);
+                        let _ = enigo.button(Button::Left, Direction::Click);
+                        let _ = enigo.button(Button::Left, Direction::Click);
+                        logger(format!("Subgraph DoubleClick: ({}, {})", x, y));
+                    }
+                }
+                NodeType::RightClick => {
+                    if let Ok(mut enigo) = Enigo::new(&Settings::default()) {
+                        let x = Self::evaluate_input(&graph, current_node_id, "X", &context)
+                            .map(|v| Self::to_float(&v) as i32).unwrap_or(0);
+                        let y = Self::evaluate_input(&graph, current_node_id, "Y", &context)
+                            .map(|v| Self::to_float(&v) as i32).unwrap_or(0);
+                        let _ = enigo.move_mouse(x, y, Coordinate::Abs);
+                        let _ = enigo.button(Button::Right, Direction::Click);
+                        logger(format!("Subgraph RightClick: ({}, {})", x, y));
+                    }
+                }
+                NodeType::KeyDown => {
+                    let key_str = Self::evaluate_input(&graph, current_node_id, "Key", &context)
+                        .map(|v| Self::to_string(&v)).unwrap_or_else(|_| "a".into());
+                    if let Ok(mut enigo) = Enigo::new(&Settings::default()) {
+                        if key_str.len() == 1 {
+                            if let Some(c) = key_str.chars().next() {
+                                let _ = enigo.key(Key::Unicode(c), Direction::Press);
+                            }
+                        }
+                    }
+                }
+                NodeType::KeyUp => {
+                    let key_str = Self::evaluate_input(&graph, current_node_id, "Key", &context)
+                        .map(|v| Self::to_string(&v)).unwrap_or_else(|_| "a".into());
+                    if let Ok(mut enigo) = Enigo::new(&Settings::default()) {
+                        if key_str.len() == 1 {
+                            if let Some(c) = key_str.chars().next() {
+                                let _ = enigo.key(Key::Unicode(c), Direction::Release);
+                            }
+                        }
+                    }
+                }
+                NodeType::HotKey => {
+                    let key_str = Self::evaluate_input(&graph, current_node_id, "Key", &context)
+                        .map(|v| Self::to_string(&v)).unwrap_or_default();
+                    let ctrl = Self::evaluate_input(&graph, current_node_id, "Ctrl", &context)
+                        .map(|v| Self::to_bool(&v)).unwrap_or(false);
+                    let shift = Self::evaluate_input(&graph, current_node_id, "Shift", &context)
+                        .map(|v| Self::to_bool(&v)).unwrap_or(false);
+                    let alt = Self::evaluate_input(&graph, current_node_id, "Alt", &context)
+                        .map(|v| Self::to_bool(&v)).unwrap_or(false);
+                    let meta = Self::evaluate_input(&graph, current_node_id, "Meta", &context)
+                        .map(|v| Self::to_bool(&v)).unwrap_or(false);
+
+                    if let Ok(mut enigo) = Enigo::new(&Settings::default()) {
+                        if ctrl { let _ = enigo.key(Key::Control, Direction::Press); }
+                        if shift { let _ = enigo.key(Key::Shift, Direction::Press); }
+                        if alt { let _ = enigo.key(Key::Alt, Direction::Press); }
+                        if meta { let _ = enigo.key(Key::Meta, Direction::Press); }
+
+                        if key_str.len() == 1 {
+                            if let Some(c) = key_str.chars().next() {
+                                let _ = enigo.key(Key::Unicode(c), Direction::Click);
+                            }
+                        }
+
+                        if meta { let _ = enigo.key(Key::Meta, Direction::Release); }
+                        if alt { let _ = enigo.key(Key::Alt, Direction::Release); }
+                        if shift { let _ = enigo.key(Key::Shift, Direction::Release); }
+                        if ctrl { let _ = enigo.key(Key::Control, Direction::Release); }
+                        
+                        logger(format!("Subgraph HotKey: {}{}{}{}{}", 
+                            if ctrl { "Ctrl+" } else { "" },
+                            if shift { "Shift+" } else { "" },
+                            if alt { "Alt+" } else { "" },
+                            if meta { "Meta+" } else { "" },
+                            key_str));
+                    }
+                }
+                NodeType::HTTPRequest => {
+                    let url = Self::evaluate_input(&graph, current_node_id, "URL", &context)
+                        .map(|v| Self::to_string(&v)).unwrap_or_default();
+                    let method = Self::evaluate_input(&graph, current_node_id, "Method", &context)
+                        .map(|v| Self::to_string(&v)).unwrap_or_else(|_| "GET".into());
+                    let body = Self::evaluate_input(&graph, current_node_id, "Body", &context)
+                        .map(|v| Self::to_string(&v)).unwrap_or_default();
+
+                    logger(format!("Subgraph HTTPRequest: {} {}", method.to_uppercase(), url));
+
+                    let result = if method.to_uppercase() == "POST" {
+                        std::process::Command::new("curl").args(["-s", "-X", "POST", "-d", &body, &url]).output()
+                    } else {
+                        std::process::Command::new("curl").args(["-s", &url]).output()
+                    };
+
+                    {
+                        let mut ctx = context.lock().unwrap();
+                        let node_id_str = current_node_id.to_string();
+                        match result {
+                            Ok(output) => {
+                                let response = String::from_utf8_lossy(&output.stdout).to_string();
+                                ctx.variables.insert(format!("__out_{}_Response", node_id_str), VariableValue::String(response));
+                                ctx.variables.insert(format!("__out_{}_Success", node_id_str), VariableValue::Boolean(output.status.success()));
+                            }
+                            Err(_) => {
+                                ctx.variables.insert(format!("__out_{}_Response", node_id_str), VariableValue::String("".into()));
+                                ctx.variables.insert(format!("__out_{}_Success", node_id_str), VariableValue::Boolean(false));
+                            }
+                        }
+                    }
+                }
+                NodeType::FileWrite => {
+                    let path = Self::evaluate_input(&graph, current_node_id, "Path", &context)
+                        .map(|v| Self::to_string(&v)).unwrap_or_default();
+                    let content = Self::evaluate_input(&graph, current_node_id, "Content", &context)
+                        .map(|v| Self::to_string(&v)).unwrap_or_default();
+                    match std::fs::write(&path, &content) {
+                        Ok(_) => logger(format!("Subgraph FileWrite: wrote to {}", path)),
+                        Err(e) => logger(format!("Subgraph FileWrite: error - {}", e)),
+                    }
+                }
+                NodeType::ArrayPush => {
+                    let var_name = Self::evaluate_input(&graph, current_node_id, "Variable", &context)
+                        .map(|v| Self::to_string(&v)).unwrap_or_default();
+                    let value = Self::evaluate_input(&graph, current_node_id, "Value", &context)
+                        .unwrap_or(VariableValue::None);
+                    {
+                        let mut ctx = context.lock().unwrap();
+                        if let Some(VariableValue::Array(arr)) = ctx.variables.get_mut(&var_name) {
+                            arr.push(value);
+                        } else {
+                            ctx.variables.insert(var_name.clone(), VariableValue::Array(vec![value]));
+                        }
+                    }
+                }
+                NodeType::ArrayPop => {
+                    let var_name = Self::evaluate_input(&graph, current_node_id, "Variable", &context)
+                        .map(|v| Self::to_string(&v)).unwrap_or_default();
+                    {
+                        let mut ctx = context.lock().unwrap();
+                        let node_id_str = current_node_id.to_string();
+                        if let Some(VariableValue::Array(arr)) = ctx.variables.get_mut(&var_name) {
+                            let popped = arr.pop().unwrap_or(VariableValue::None);
+                            ctx.variables.insert(format!("__out_{}_Value", node_id_str), popped);
+                        } else {
+                            ctx.variables.insert(format!("__out_{}_Value", node_id_str), VariableValue::None);
+                        }
+                    }
+                }
+                NodeType::ArraySet => {
+                    let var_name = Self::evaluate_input(&graph, current_node_id, "Variable", &context)
+                        .map(|v| Self::to_string(&v)).unwrap_or_default();
+                    let index = Self::evaluate_input(&graph, current_node_id, "Index", &context)
+                        .map(|v| Self::to_float(&v) as usize).unwrap_or(0);
+                    let value = Self::evaluate_input(&graph, current_node_id, "Value", &context)
+                        .unwrap_or(VariableValue::None);
+                    {
+                        let mut ctx = context.lock().unwrap();
+                        if let Some(VariableValue::Array(arr)) = ctx.variables.get_mut(&var_name) {
+                            while arr.len() <= index { arr.push(VariableValue::None); }
+                            arr[index] = value;
+                        }
+                    }
+                }
+                NodeType::RunCommand => {
+                    let command = Self::evaluate_input(&graph, current_node_id, "Command", &context)
+                        .map(|v| Self::to_string(&v)).unwrap_or_default();
+                    logger(format!("Subgraph RunCommand: {}", command));
+                    let result = std::process::Command::new("sh").args(["-c", &command]).output();
+                    {
+                        let mut ctx = context.lock().unwrap();
+                        let node_id_str = current_node_id.to_string();
+                        match result {
+                            Ok(output) => {
+                                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                                ctx.variables.insert(format!("__out_{}_Output", node_id_str), VariableValue::String(stdout));
+                                ctx.variables.insert(format!("__out_{}_Error", node_id_str), VariableValue::String(stderr));
+                                ctx.variables.insert(format!("__out_{}_ExitCode", node_id_str), VariableValue::Integer(output.status.code().unwrap_or(-1) as i64));
+                            }
+                            Err(e) => {
+                                ctx.variables.insert(format!("__out_{}_Output", node_id_str), VariableValue::String("".into()));
+                                ctx.variables.insert(format!("__out_{}_Error", node_id_str), VariableValue::String(e.to_string()));
+                                ctx.variables.insert(format!("__out_{}_ExitCode", node_id_str), VariableValue::Integer(-1));
+                            }
+                        }
+                    }
+                }
+                NodeType::GetPixelColor => {
+                    let x = Self::evaluate_input(&graph, current_node_id, "X", &context)
+                        .map(|v| Self::to_float(&v) as u32).unwrap_or(0);
+                    let y = Self::evaluate_input(&graph, current_node_id, "Y", &context)
+                        .map(|v| Self::to_float(&v) as u32).unwrap_or(0);
+                    
+                    let (r, g, b) = match xcap::Monitor::all() {
+                        Ok(monitors) => {
+                            if let Some(monitor) = monitors.first() {
+                                if let Ok(img) = monitor.capture_image() {
+                                    let logical_w = monitor.width().ok().unwrap_or(img.width()) as f32;
+                                    let physical_w = img.width() as f32;
+                                    let scale = physical_w / logical_w;
+                                    let px = (x as f32 * scale) as u32;
+                                    let py = (y as f32 * scale) as u32;
+                                    if px < img.width() && py < img.height() {
+                                        let pixel = img.get_pixel(px, py);
+                                        (pixel[0] as i64, pixel[1] as i64, pixel[2] as i64)
+                                    } else { (0, 0, 0) }
+                                } else { (0, 0, 0) }
+                            } else { (0, 0, 0) }
+                        }
+                        Err(_) => (0, 0, 0),
+                    };
+                    {
+                        let mut ctx = context.lock().unwrap();
+                        let node_id_str = current_node_id.to_string();
+                        ctx.variables.insert(format!("__out_{}_R", node_id_str), VariableValue::Integer(r));
+                        ctx.variables.insert(format!("__out_{}_G", node_id_str), VariableValue::Integer(g));
+                        ctx.variables.insert(format!("__out_{}_B", node_id_str), VariableValue::Integer(b));
+                    }
+                }
+                NodeType::FindColor => {
+                    let target_r = Self::evaluate_input(&graph, current_node_id, "R", &context)
+                        .map(|v| Self::to_float(&v) as u8).unwrap_or(255);
+                    let target_g = Self::evaluate_input(&graph, current_node_id, "G", &context)
+                        .map(|v| Self::to_float(&v) as u8).unwrap_or(0);
+                    let target_b = Self::evaluate_input(&graph, current_node_id, "B", &context)
+                        .map(|v| Self::to_float(&v) as u8).unwrap_or(0);
+                    let tolerance = Self::evaluate_input(&graph, current_node_id, "Tolerance", &context)
+                        .map(|v| Self::to_float(&v) as i32).unwrap_or(10);
+
+                    let (found_x, found_y, found) = match xcap::Monitor::all() {
+                        Ok(monitors) => {
+                            if let Some(monitor) = monitors.first() {
+                                if let Ok(img) = monitor.capture_image() {
+                                    let logical_w = monitor.width().ok().unwrap_or(img.width()) as f32;
+                                    let physical_w = img.width() as f32;
+                                    let scale = physical_w / logical_w;
+                                    let mut result = (0i64, 0i64, false);
+                                    'outer: for py in (0..img.height()).step_by(2) {
+                                        for px in (0..img.width()).step_by(2) {
+                                            let pixel = img.get_pixel(px, py);
+                                            let dr = (pixel[0] as i32 - target_r as i32).abs();
+                                            let dg = (pixel[1] as i32 - target_g as i32).abs();
+                                            let db = (pixel[2] as i32 - target_b as i32).abs();
+                                            if dr <= tolerance && dg <= tolerance && db <= tolerance {
+                                                result = ((px as f32 / scale) as i64, (py as f32 / scale) as i64, true);
+                                                break 'outer;
+                                            }
+                                        }
+                                    }
+                                    result
+                                } else { (0, 0, false) }
+                            } else { (0, 0, false) }
+                        }
+                        Err(_) => (0, 0, false),
+                    };
+                    {
+                        let mut ctx = context.lock().unwrap();
+                        let node_id_str = current_node_id.to_string();
+                        ctx.variables.insert(format!("__out_{}_X", node_id_str), VariableValue::Integer(found_x));
+                        ctx.variables.insert(format!("__out_{}_Y", node_id_str), VariableValue::Integer(found_y));
+                        ctx.variables.insert(format!("__out_{}_Found", node_id_str), VariableValue::Boolean(found));
+                    }
+                }
+                NodeType::ForLoop => {
+                    // Nested ForLoop support
+                    let start = Self::evaluate_input(&graph, current_node_id, "Start", &context)
+                        .map(|v| match v { VariableValue::Integer(i) => i, _ => 0 }).unwrap_or(0);
+                    let end = Self::evaluate_input(&graph, current_node_id, "End", &context)
+                        .map(|v| match v { VariableValue::Integer(i) => i, _ => 10 }).unwrap_or(10);
+                    
+                    for i in start..end {
+                        { let ctx = context.lock().unwrap(); if ctx.should_stop() { break; } }
+                        { let mut ctx = context.lock().unwrap(); ctx.variables.insert("__loop_index".into(), VariableValue::Integer(i)); }
+                        if let Some(loop_body) = Self::follow_flow(&graph, current_node_id, "Loop") {
+                            Self::execute_subgraph(graph.clone(), loop_body, context.clone(), tx.clone(), parent_loop_id);
+                        }
+                    }
+                    // Follow Done port
+                    if let Some(done) = Self::follow_flow(&graph, current_node_id, "Done") {
+                        current_node_id = done;
+                        continue;
+                    }
+                }
+                NodeType::WhileLoop => {
+                    let max_iter = 1000;
+                    let mut iter = 0;
+                    while iter < max_iter {
+                        { let ctx = context.lock().unwrap(); if ctx.should_stop() { break; } }
+                        let cond = Self::evaluate_input(&graph, current_node_id, "Condition", &context)
+                            .unwrap_or(VariableValue::Boolean(false));
+                        if !Self::to_bool(&cond) { break; }
+                        if let Some(loop_body) = Self::follow_flow(&graph, current_node_id, "Loop") {
+                            Self::execute_subgraph(graph.clone(), loop_body, context.clone(), tx.clone(), parent_loop_id);
+                        }
+                        iter += 1;
+                    }
+                    if let Some(done) = Self::follow_flow(&graph, current_node_id, "Done") {
+                        current_node_id = done;
+                        continue;
+                    }
+                }
+                NodeType::Sequence => {
+                    for i in 0..3 {
+                        let port_name = format!("Then {}", i);
+                        if let Some(next) = Self::follow_flow(&graph, current_node_id, &port_name) {
+                            Self::execute_subgraph(graph.clone(), next, context.clone(), tx.clone(), parent_loop_id);
+                        }
+                    }
+                    // Sequence ends here, no Next
+                    break;
+                }
+                NodeType::Gate => {
+                    let is_open = Self::evaluate_input(&graph, current_node_id, "Open", &context)
+                        .map(|v| Self::to_bool(&v)).unwrap_or(true);
+                    if is_open {
+                        if let Some(out) = Self::follow_flow(&graph, current_node_id, "Out") {
+                            current_node_id = out;
+                            continue;
+                        }
+                    }
+                    break; // Gate closed or no Out connection
+                }
+                NodeType::WaitForCondition => {
+                    let poll_interval = Self::evaluate_input(&graph, current_node_id, "Poll Interval (ms)", &context)
+                        .map(|v| Self::to_float(&v) as u64).unwrap_or(100);
+                    let timeout_ms = Self::evaluate_input(&graph, current_node_id, "Timeout (ms)", &context)
+                        .map(|v| Self::to_float(&v) as u64).unwrap_or(0);
+                    
+                    let start_time = std::time::Instant::now();
+                    let mut timed_out = false;
+                    
+                    loop {
+                        { let ctx = context.lock().unwrap(); if ctx.should_stop() { break; } }
+                        let cond = Self::evaluate_input(&graph, current_node_id, "Condition", &context)
+                            .unwrap_or(VariableValue::Boolean(false));
+                        if Self::to_bool(&cond) { break; }
+                        if timeout_ms > 0 && start_time.elapsed().as_millis() as u64 > timeout_ms {
+                            timed_out = true;
+                            break;
+                        }
+                        thread::sleep(Duration::from_millis(poll_interval));
+                    }
+                    {
+                        let mut ctx = context.lock().unwrap();
+                        ctx.variables.insert(format!("__out_{}_Timed Out", current_node_id), VariableValue::Boolean(timed_out));
+                    }
+                }
+                NodeType::WaitForColor => {
+                    let target_r = Self::evaluate_input(&graph, current_node_id, "R", &context)
+                        .map(|v| Self::to_float(&v) as u8).unwrap_or(255);
+                    let target_g = Self::evaluate_input(&graph, current_node_id, "G", &context)
+                        .map(|v| Self::to_float(&v) as u8).unwrap_or(0);
+                    let target_b = Self::evaluate_input(&graph, current_node_id, "B", &context)
+                        .map(|v| Self::to_float(&v) as u8).unwrap_or(0);
+                    let tolerance = Self::evaluate_input(&graph, current_node_id, "Tolerance", &context)
+                        .map(|v| Self::to_float(&v) as i32).unwrap_or(10);
+                    let timeout_ms = Self::evaluate_input(&graph, current_node_id, "Timeout", &context)
+                        .map(|v| Self::to_float(&v) as u64).unwrap_or(5000);
+
+                    let start_time = std::time::Instant::now();
+                    let mut found = false;
+
+                    while start_time.elapsed().as_millis() < timeout_ms as u128 {
+                        { let ctx = context.lock().unwrap(); if ctx.should_stop() { break; } }
+                        if let Ok(monitors) = xcap::Monitor::all() {
+                            if let Some(monitor) = monitors.first() {
+                                if let Ok(img) = monitor.capture_image() {
+                                    'search: for py in (0..img.height()).step_by(4) {
+                                        for px in (0..img.width()).step_by(4) {
+                                            let pixel = img.get_pixel(px, py);
+                                            let dr = (pixel[0] as i32 - target_r as i32).abs();
+                                            let dg = (pixel[1] as i32 - target_g as i32).abs();
+                                            let db = (pixel[2] as i32 - target_b as i32).abs();
+                                            if dr <= tolerance && dg <= tolerance && db <= tolerance {
+                                                found = true;
+                                                break 'search;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if found { break; }
+                        thread::sleep(Duration::from_millis(100));
+                    }
+                    {
+                        let mut ctx = context.lock().unwrap();
+                        ctx.variables.insert(format!("__out_{}_Found", current_node_id), VariableValue::Boolean(found));
+                    }
+                }
+                NodeType::Branch => {
+                    // IF node - evaluate condition and follow True or False port
+                    let condition = Self::evaluate_input(&graph, current_node_id, "Condition", &context)
+                        .unwrap_or(VariableValue::Boolean(false));
+                    let bool_val = Self::to_bool(&condition);
+                    let port = if bool_val { "True" } else { "False" };
+                    
+                    // Find and follow the correct branch
+                    if let Some(next) = Self::follow_flow(&graph, current_node_id, port) {
+                        current_node_id = next;
+                        continue;
+                    }
+                    break; // No connection on this branch
+                }
+                NodeType::ForEachLine => {
+                    // ForEachLine - iterate over lines in text
+                    let text = Self::evaluate_input(&graph, current_node_id, "Text", &context)
+                        .map(|v| Self::to_string(&v))
+                        .unwrap_or_default();
+
+                    let lines: Vec<&str> = text.lines().collect();
+                    let node_id_str = current_node_id.to_string();
+
+                    logger(format!("ForEachLine: Processing {} lines", lines.len()));
+
+                    for (i, line) in lines.iter().enumerate() {
+                        { let ctx = context.lock().unwrap(); if ctx.should_stop() { break; } }
+                        {
+                            let mut ctx = context.lock().unwrap();
+                            ctx.variables.insert(
+                                format!("__out_{}_Line", node_id_str),
+                                VariableValue::String(line.to_string()),
+                            );
+                            ctx.variables.insert(
+                                format!("__out_{}_Index", node_id_str),
+                                VariableValue::Integer(i as i64),
+                            );
+                            ctx.variables.insert("__loop_index".into(), VariableValue::Integer(i as i64));
+                        }
+
+                        if let Some(loop_body) = Self::follow_flow(&graph, current_node_id, "Loop") {
+                            Self::execute_subgraph(graph.clone(), loop_body, context.clone(), tx.clone(), parent_loop_id);
+                        }
+                    }
+
+                    // Follow Done port
+                    if let Some(done) = Self::follow_flow(&graph, current_node_id, "Done") {
+                        current_node_id = done;
+                        continue;
+                    }
+                }
                 _ => {
                     // For unsupported nodes, just log and try to continue
-                    logger(format!("Subgraph: Executing {:?}", node.node_type));
+                    logger(format!("Subgraph: Skipping unsupported node {:?}", node.node_type));
                 }
             }
-            
+
             // Follow to next node, checking for Continue port connection
             let mut next_node = None;
             for conn in &graph.connections {
@@ -2703,7 +3420,7 @@ impl Interpreter {
                     break;
                 }
             }
-            
+
             match next_node {
                 Some(next) => current_node_id = next,
                 None => break, // End of flow
@@ -2967,6 +3684,17 @@ impl Interpreter {
                     .cloned()
                     .unwrap_or(VariableValue::Integer(0)))
             }
+            // ForEachLine - returns current line or index from context
+            NodeType::ForEachLine => {
+                // Outputs are stored as __out_{node_id}_Line and __out_{node_id}_Index
+                // The input resolver will handle looking up the correct output
+                let ctx = context.lock().unwrap();
+                // Default to returning the line value
+                ctx.variables
+                    .get(&format!("__out_{}_Line", node.id))
+                    .cloned()
+                    .ok_or_else(|| anyhow::anyhow!("ForEachLine not currently executing"))
+            }
             // Xor
             NodeType::Xor => {
                 let a = Self::evaluate_input(graph, node.id, "A", context)?;
@@ -3060,17 +3788,17 @@ impl Interpreter {
                     Ok(VariableValue::Boolean(b)) => b,
                     _ => true, // Default to milliseconds
                 };
-                
+
                 let timestamp = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap();
-                
+
                 let value = if use_millis {
                     timestamp.as_millis() as i64  // 13-digit (milliseconds)
                 } else {
                     timestamp.as_secs() as i64    // 10-digit (seconds)
                 };
-                
+
                 Ok(VariableValue::Integer(value))
             }
             // Concat
@@ -3210,9 +3938,24 @@ impl Interpreter {
             // ArrayCreate - Creates an empty array
             NodeType::ArrayCreate => Ok(VariableValue::Array(Vec::new())),
 
-            // ArrayGet - Get element at index from array
+            // ArrayGet - Get element at index from array (supports variable name or direct array)
             NodeType::ArrayGet => {
-                let array = Self::evaluate_input(graph, node.id, "Array", context)?;
+                // Try to get array from Variable input first, then Array input
+                let array = {
+                    let var_name = Self::evaluate_input(graph, node.id, "Variable", context)
+                        .map(|v| Self::to_string(&v))
+                        .unwrap_or_default();
+                    
+                    if !var_name.is_empty() {
+                        // Get from variable
+                        let ctx = context.lock().unwrap();
+                        ctx.variables.get(&var_name).cloned().unwrap_or(VariableValue::Array(vec![]))
+                    } else {
+                        // Get from direct Array input
+                        Self::evaluate_input(graph, node.id, "Array", context)?
+                    }
+                };
+                
                 let index = Self::evaluate_input(graph, node.id, "Index", context)?;
 
                 let idx = match index {
@@ -3237,9 +3980,24 @@ impl Interpreter {
                 }
             }
 
-            // ArrayLength - Get the length of an array
+            // ArrayLength - Get the length of an array (supports variable name or direct array)
             NodeType::ArrayLength => {
-                let array = Self::evaluate_input(graph, node.id, "Array", context)?;
+                // Try to get array from Variable input first, then Array input
+                let array = {
+                    let var_name = Self::evaluate_input(graph, node.id, "Variable", context)
+                        .map(|v| Self::to_string(&v))
+                        .unwrap_or_default();
+                    
+                    if !var_name.is_empty() {
+                        // Get from variable
+                        let ctx = context.lock().unwrap();
+                        ctx.variables.get(&var_name).cloned().unwrap_or(VariableValue::Array(vec![]))
+                    } else {
+                        // Get from direct Array input
+                        Self::evaluate_input(graph, node.id, "Array", context)?
+                    }
+                };
+                
                 match array {
                     VariableValue::Array(arr) => Ok(VariableValue::Integer(arr.len() as i64)),
                     VariableValue::String(s) => Ok(VariableValue::Integer(s.len() as i64)),

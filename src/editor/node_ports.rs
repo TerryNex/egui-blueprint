@@ -86,38 +86,38 @@ pub fn get_ports_for_type(node_type: &NodeType) -> (Vec<Port>, Vec<Port>) {
                 vec![
                     Port {
                         name: "A".into(),
-                        data_type: DataType::Float,
-                        default_value: VariableValue::Float(0.0),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
                     },
                     Port {
                         name: "B".into(),
-                        data_type: DataType::Float,
-                        default_value: VariableValue::Float(0.0),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
                     },
                 ],
                 vec![Port {
                     name: "Out".into(),
-                    data_type: DataType::Float,
-                    default_value: VariableValue::Float(0.0),
+                    data_type: DataType::Integer,
+                    default_value: VariableValue::Integer(0),
                 }],
             ),
             NodeType::Multiply => (
                 vec![
                     Port {
                         name: "A".into(),
-                        data_type: DataType::Float,
-                        default_value: VariableValue::Float(0.0),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
                     },
                     Port {
                         name: "B".into(),
-                        data_type: DataType::Float,
-                        default_value: VariableValue::Float(0.0),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
                     },
                 ],
                 vec![Port {
                     name: "Out".into(),
-                    data_type: DataType::Float,
-                    default_value: VariableValue::Float(0.0),
+                    data_type: DataType::Integer,
+                    default_value: VariableValue::Integer(0),
                 }],
             ),
             NodeType::ToInteger => (
@@ -1400,11 +1400,18 @@ pub fn get_ports_for_type(node_type: &NodeType) -> (Vec<Port>, Vec<Port>) {
                         default_value: VariableValue::None,
                     },
                 ],
-                vec![Port {
-                    name: "Next".into(),
-                    data_type: DataType::ExecutionFlow,
-                    default_value: VariableValue::None,
-                }],
+                vec![
+                    Port {
+                        name: "Next".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Array".into(),
+                        data_type: DataType::Array,
+                        default_value: VariableValue::Array(vec![]),
+                    },
+                ],
             ),
 
             // ArrayPop - Remove and return last element (execution flow)
@@ -1432,12 +1439,22 @@ pub fn get_ports_for_type(node_type: &NodeType) -> (Vec<Port>, Vec<Port>) {
                         data_type: DataType::Custom("Any".into()),
                         default_value: VariableValue::None,
                     },
+                    Port {
+                        name: "Array".into(),
+                        data_type: DataType::Array,
+                        default_value: VariableValue::Array(vec![]),
+                    },
                 ],
             ),
 
-            // ArrayGet - Get element by index (pure function)
+            // ArrayGet - Get element by index (supports variable name or direct array)
             NodeType::ArrayGet => (
                 vec![
+                    Port {
+                        name: "Variable".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("".into()),
+                    },
                     Port {
                         name: "Array".into(),
                         data_type: DataType::Array,
@@ -1480,20 +1497,34 @@ pub fn get_ports_for_type(node_type: &NodeType) -> (Vec<Port>, Vec<Port>) {
                         default_value: VariableValue::None,
                     },
                 ],
-                vec![Port {
-                    name: "Next".into(),
-                    data_type: DataType::ExecutionFlow,
-                    default_value: VariableValue::None,
-                }],
+                vec![
+                    Port {
+                        name: "Next".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Array".into(),
+                        data_type: DataType::Array,
+                        default_value: VariableValue::Array(vec![]),
+                    },
+                ],
             ),
 
-            // ArrayLength - Get length of array (pure function)
+            // ArrayLength - Get length of array (supports variable name or direct array)
             NodeType::ArrayLength => (
-                vec![Port {
-                    name: "Array".into(),
-                    data_type: DataType::Array,
-                    default_value: VariableValue::Array(vec![]),
-                }],
+                vec![
+                    Port {
+                        name: "Variable".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("".into()),
+                    },
+                    Port {
+                        name: "Array".into(),
+                        data_type: DataType::Array,
+                        default_value: VariableValue::Array(vec![]),
+                    },
+                ],
                 vec![Port {
                     name: "Length".into(),
                     data_type: DataType::Integer,
@@ -2173,6 +2204,44 @@ pub fn get_ports_for_type(node_type: &NodeType) -> (Vec<Port>, Vec<Port>) {
                         name: "Loop".into(),
                         data_type: DataType::ExecutionFlow,
                         default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Index".into(),
+                        data_type: DataType::Integer,
+                        default_value: VariableValue::Integer(0),
+                    },
+                    Port {
+                        name: "Done".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                ],
+            ),
+
+            // ForEachLine - Iterate over each line in multi-line text
+            NodeType::ForEachLine => (
+                vec![
+                    Port {
+                        name: "In".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Text".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("".into()),
+                    },
+                ],
+                vec![
+                    Port {
+                        name: "Loop".into(),
+                        data_type: DataType::ExecutionFlow,
+                        default_value: VariableValue::None,
+                    },
+                    Port {
+                        name: "Line".into(),
+                        data_type: DataType::String,
+                        default_value: VariableValue::String("".into()),
                     },
                     Port {
                         name: "Index".into(),

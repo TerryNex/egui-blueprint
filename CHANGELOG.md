@@ -4,6 +4,33 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased] - 2026-01-14
+
+### Added
+
+- **ForEachLine Node** (Agent: Antigravity):
+  - New control flow node for iterating over multi-line text
+  - Input: Text (String) - multi-line content to iterate
+  - Outputs: Loop (ExecutionFlow), Line (current line content), Index (0-based line number), Done (after completion)
+  - Works with FileRead output for processing text files line by line
+  - Stores `__loop_index` for compatibility with existing patterns
+
+### Fixed
+
+- **Array Nodes API Consistency** (Agent: Antigravity):
+  - **ArrayGet** now accepts optional "Variable" input to retrieve array by name from context
+  - **ArrayLength** now accepts optional "Variable" input for consistency
+  - **ArrayPush/ArrayPop/ArraySet** now output the modified Array for chaining
+  - Unified API: all array manipulation nodes now work with variable names consistently
+  - Example workflow: `ArrayPush(myArr, "val")` → `ArrayGet(myArr, 0)` now works correctly
+
+- **ForLoop/WhileLoop Full Node Support** (Bug #UserReported): Fixed issue where many node types were not executing inside loop bodies. The `execute_subgraph` function now supports all major node types including:
+  - **Mouse/Keyboard**: DoubleClick, RightClick, KeyDown, KeyUp, HotKey
+  - **Image Recognition**: FindImage, WaitForImage, GetPixelColor, FindColor, WaitForColor
+  - **Data**: HTTPRequest, FileWrite, ArrayPush, ArrayPop, ArraySet, RunCommand
+  - **Control Flow**: ForLoop (nested), WhileLoop (nested), Sequence, Gate, Branch, WaitForCondition
+  - This enables full blueprint functionality within loops instead of nodes being skipped.
+
 ## [Unreleased] - 2026-01-13
 
 ### Added

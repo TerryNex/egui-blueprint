@@ -1261,6 +1261,7 @@ impl eframe::App for MyApp {
                                 NodeType::Gate => "Gate".into(),
                                 NodeType::WaitForCondition => "Wait For Condition".into(),
                                 NodeType::ForLoopAsync => "For Loop Async".into(),
+                                NodeType::ForEachLine => "For Each Line".into(),
                                 NodeType::Equals => "Equals".into(),
                                 NodeType::NotEquals => "Not Equals".into(),
                                 NodeType::GreaterThan => "Greater Than".into(),

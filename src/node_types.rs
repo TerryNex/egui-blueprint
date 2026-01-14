@@ -170,6 +170,8 @@ pub enum NodeType {
     WaitForCondition,
     /// For loop that waits for Continue signal before each iteration
     ForLoopAsync,
+    /// Iterate over each line in a multi-line text string
+    ForEachLine,
 }
 
 impl Default for NodeType {

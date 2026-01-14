@@ -846,6 +846,7 @@ impl GraphEditor {
                                 ("Branch", crate::node_types::NodeType::Branch),
                                 ("For Loop", crate::node_types::NodeType::ForLoop),
                                 ("For Loop Async", crate::node_types::NodeType::ForLoopAsync),
+                                ("For Each Line", crate::node_types::NodeType::ForEachLine),
                                 ("While Loop", crate::node_types::NodeType::WhileLoop),
                                 ("Delay", crate::node_types::NodeType::Delay),
                                 ("Get Timestamp", crate::node_types::NodeType::GetTimestamp),
