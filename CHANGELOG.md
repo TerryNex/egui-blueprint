@@ -2,9 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] - 2026-01-14
+## [Unreleased]
+
+### Added
+
+- Comprehensive project documentation:
+  - Created CONTRIBUTING.md with development guidelines, code style, commit conventions, and PR process
+  - Created .github/copilot-instructions.md for AI-assisted development
+  - Updated README.md with detailed feature documentation and getting started guide
+  - Improved CHANGELOG.md with proper semantic versioning
+
+## [0.2.0] - 2026-01-14
 
 ### Added
 
@@ -31,7 +42,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - **Control Flow**: ForLoop (nested), WhileLoop (nested), Sequence, Gate, Branch, WaitForCondition
   - This enables full blueprint functionality within loops instead of nodes being skipped.
 
-## [Unreleased] - 2026-01-13
+## [0.1.9] - 2026-01-13
 
 ### Added
 
@@ -62,7 +73,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - Removed hardcoded Retina 2x scaling for cross-platform compatibility
   - Tolerance now maps to NCC threshold: 0 = exact match, 255 = any match
 
-## [Unreleased] - 2026-01-12
+## [0.1.8] - 2026-01-12
 
 ### Added
 
@@ -112,7 +123,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - Default OFF: prevents flooding graph with MouseMove nodes
   - Enable when you need to record mouse movement paths
 
-## [Unreleased] - 2026-01-11
+## [0.1.7] - 2026-01-11
 
 ### Refactored
 
@@ -182,7 +193,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **HTTPRequest Response Output** (Bug): Fixed issue where HTTPRequest node's Response and Success outputs returned `None`. Changed storage pattern from global `__http_response` variable to per-node `__out_{id}_{port}` pattern matching other flow nodes.
 - **ArrayPop Output**: Added ArrayPop to stored outputs handler so its Result output port works correctly.
 
-## [Unreleased] - 2026-01-07
+## [0.1.6] - 2026-01-07
 
 ### Added
 
@@ -285,3 +296,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Variable system
 - Connection drawing with bezier curves
 - Colored log output with variable highlighting
+
+[Unreleased]: https://github.com/TerryNex/egui-blueprint/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/TerryNex/egui-blueprint/compare/v0.1.9...v0.2.0
+[0.1.9]: https://github.com/TerryNex/egui-blueprint/compare/v0.1.8...v0.1.9
+[0.1.8]: https://github.com/TerryNex/egui-blueprint/compare/v0.1.7...v0.1.8
+[0.1.7]: https://github.com/TerryNex/egui-blueprint/compare/v0.1.6...v0.1.7
+[0.1.6]: https://github.com/TerryNex/egui-blueprint/compare/v0.1.1...v0.1.6
+[0.1.1]: https://github.com/TerryNex/egui-blueprint/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/TerryNex/egui-blueprint/releases/tag/v0.1.0
