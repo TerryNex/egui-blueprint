@@ -6,7 +6,7 @@
 
 > A visual programming system inspired by Unreal Engine Blueprints, built with Rust and egui. Create powerful automation scripts through an intuitive node-based interface.
 
-![egui-blueprint Screenshot](https://via.placeholder.com/800x400?text=egui-blueprint+Screenshot)
+![egui-blueprint Screenshot](scripts/screenshots/find%20image.png)
 
 ## 🎯 Executive Summary
 
