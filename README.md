@@ -458,27 +458,29 @@ Since the project uses manual testing:
 
 ## 🔧 Technology Stack
 
-| Category | Crate | Version | Purpose |
-|----------|-------|---------|---------|
-| **UI Framework** | `egui` | 0.33.3 | Immediate mode GUI |
-| | `eframe` | 0.33.3 | Native window management |
-| | `egui_extras` | 0.33.3 | Extra widgets (image loaders) |
-| **Serialization** | `serde` | 1.0.228 | Trait-based serialization |
-| | `serde_json` | 1.0.148 | JSON serialization |
-| **Input Automation** | `enigo` | 0.2 | Cross-platform input simulation |
-| **Screen Capture** | `xcap` | 0.8 | Cross-platform screen capture |
-| **Image Processing** | `image` | 0.25 | Image loading/manipulation |
-| | `imageproc` | 0.25 | Template matching (NCC) |
-| **Input Recording** | `rdev` | (rustdesk fork) | Input event monitoring |
-| **Async** | `crossbeam-channel` | 0.5 | Thread-safe channels |
-| | `rayon` | 1.11.0 | Parallel processing |
-| **Utilities** | `uuid` | 1.19.0 | Unique IDs for nodes |
-| | `anyhow` | 1.0.100 | Error handling |
-| | `log` | 0.4.29 | Logging facade |
-| | `env_logger` | 0.11.8 | Logger implementation |
-| | `chrono` | 0.4.42 | Date/time operations |
-| | `dirs` | 5.0 | Home directory detection |
-| | `sysinfo` | 0.35 | System monitoring |
+| Category | Crate | Purpose |
+|----------|-------|---------|
+| **UI Framework** | `egui` | Immediate mode GUI |
+| | `eframe` | Native window management |
+| | `egui_extras` | Extra widgets (image loaders) |
+| **Serialization** | `serde` | Trait-based serialization |
+| | `serde_json` | JSON serialization |
+| **Input Automation** | `enigo` | Cross-platform input simulation |
+| **Screen Capture** | `xcap` | Cross-platform screen capture |
+| **Image Processing** | `image` | Image loading/manipulation |
+| | `imageproc` | Template matching (NCC) |
+| **Input Recording** | `rdev` | Input event monitoring |
+| **Async** | `crossbeam-channel` | Thread-safe channels |
+| | `rayon` | Parallel processing |
+| **Utilities** | `uuid` | Unique IDs for nodes |
+| | `anyhow` | Error handling |
+| | `log` | Logging facade |
+| | `env_logger` | Logger implementation |
+| | `chrono` | Date/time operations |
+| | `dirs` | Home directory detection |
+| | `sysinfo` | System monitoring |
+
+> **Note**: For specific version numbers, see [Cargo.toml](Cargo.toml).
 
 ### Platform-Specific Notes
 
@@ -502,7 +504,7 @@ This project has been developed with significant AI assistance (Claude, GitHub C
 
 ### Development Statistics
 
-- **Total Lines of Code**: ~15,000 lines of Rust
+- **Total Lines of Code**: As of this submission, ~15,000 lines of Rust across 26 source files
 - **Core Modules**: 8 automation modules (A, C, D, E, G, H + Math, String, Control Flow)
 - **Node Types**: 100+ node types
 - **Development Time**: ~2 weeks (with AI assistance)
